@@ -14,10 +14,25 @@ Lightweight on-screen drawing for Windows (Tauri), inspired by Epic Pen — fewe
 - `Alt` + scroll to change brush size (size preview next to toolbar)
 - `Esc` exits and clears everything
 
+## Install
+
+Build the Windows installer, then run it:
+
+```bash
+npm install
+npm run build:app
+```
+
+Artifacts are copied to `releases/`:
+
+- `Screen Pen_*_x64-setup.exe` — NSIS installer (double-click to install)
+- `screen-pen.exe` — portable binary (run without installing)
+
+After install, the app lives in the system tray. Use the hotkey (or left-click the tray icon) to start drawing.
+
 ## Develop
 
 ```bash
-cd D:\screen-pen
 npm install
 npm run tauri dev
 ```
@@ -28,4 +43,4 @@ npm run tauri dev
 npm run tauri build
 ```
 
-App lives in the system tray. Use the hotkey (or left-click the tray icon) to start drawing.
+Raw build output still lands under `src-tauri/target/release/`. Prefer `npm run build:app` when you want installers in `releases/`.

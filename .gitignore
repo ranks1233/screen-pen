@@ -13,6 +13,8 @@ dist-app
 dist-ssr
 *.local
 src-tauri/target
+releases/*
+!releases/.gitkeep
 
 # Editor directories and files
 .vscode/*
