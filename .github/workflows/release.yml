@@ -1,0 +1,44 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  publish-windows:
+    permissions:
+      contents: write
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: npm
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Build and publish installer
+        uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: Screen Pen ${{ github.ref_name }}
+          releaseBody: |
+            ## Install (Windows)
+
+            1. Download **Screen Pen_*_x64-setup.exe** below
+            2. Double-click the file and follow the installer
+            3. Find **Screen Pen** in the system tray
+            4. Press `Ctrl+Alt+D` (or left-click the tray icon) to start drawing
+          releaseDraft: false
+          prerelease: false
+          uploadUpdaterJson: false
