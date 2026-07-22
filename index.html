@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Screen Pen</title>
+    <link rel="stylesheet" href="/src/styles.css" />
+  </head>
+  <body>
+    <canvas id="draw-canvas"></canvas>
+
+    <aside id="toolbar" aria-label="Screen Pen toolbar">
+      <button
+        id="drag-handle"
+        class="tool-btn drag-handle"
+        title="Drag to move"
+        type="button"
+        aria-label="Screen Pen"
+      >
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path
+            fill="currentColor"
+            d="M3.5 20.5l1.2-4.2L16.8 4.2a2.1 2.1 0 0 1 3 3L7.7 19.3l-4.2 1.2z"
+          />
+          <path fill="#ffd7a8" d="M16.4 4.6l3 3-1.5 1.5-3-3z" />
+        </svg>
+      </button>
+
+      <div class="tool-stack">
+        <button id="color-btn" class="tool-btn" title="Color" type="button">
+          <span id="color-swatch" class="color-swatch"></span>
+        </button>
+        <button id="settings-btn" class="tool-btn" title="Settings" type="button">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path
+              fill="currentColor"
+              d="M19.14 12.94c.04-.31.06-.63.06-.94s-.02-.63-.06-.94l2.03-1.58a.5.5 0 0 0 .12-.64l-1.92-3.32a.5.5 0 0 0-.6-.22l-2.39.96a7.1 7.1 0 0 0-1.63-.94l-.36-2.54a.5.5 0 0 0-.5-.42h-3.84a.5.5 0 0 0-.5.42l-.36 2.54c-.58.23-1.12.54-1.63.94l-2.39-.96a.5.5 0 0 0-.6.22L2.71 8.84a.5.5 0 0 0 .12.64l2.03 1.58c-.04.31-.06.63-.06.94s.02.63.06.94L2.83 14.5a.5.5 0 0 0-.12.64l1.92 3.32c.13.23.4.32.64.22l2.39-.96c.5.4 1.05.72 1.63.94l.36 2.54c.05.24.26.42.5.42h3.84c.24 0 .45-.18.5-.42l.36-2.54c.58-.22 1.12-.54 1.63-.94l2.39.96c.24.1.51 0 .64-.22l1.92-3.32a.5.5 0 0 0-.12-.64l-2.03-1.58zM12 15.5A3.5 3.5 0 1 1 12 8a3.5 3.5 0 0 1 0 7.5z"
+            />
+          </svg>
+        </button>
+      </div>
+
+      <div id="size-preview" class="size-preview" title="Brush size (Shift + scroll)"></div>
+    </aside>
+
+    <div id="color-panel" class="panel hidden" role="dialog" aria-label="Color picker">
+      <div class="preset-row" id="color-presets"></div>
+      <label class="field">
+        <span>Custom</span>
+        <input id="color-input" type="color" value="#ff2d2d" />
+      </label>
+      <button id="add-preset-btn" type="button" class="add-preset-btn" disabled>
+        Add this color to defaults
+      </button>
+    </div>
+
+    <div id="settings-panel" class="panel hidden" role="dialog" aria-label="Settings">
+      <h2>Settings</h2>
+      <label class="field">
+        <span>Activate hotkey</span>
+        <button id="hotkey-btn" type="button" class="hotkey-btn">Ctrl+Alt+D</button>
+      </label>
+      <label class="field">
+        <span>Color panel hotkey</span>
+        <button id="color-hotkey-btn" type="button" class="hotkey-btn">C</button>
+      </label>
+      <label class="field">
+        <span>Size change hotkey</span>
+        <button id="size-hotkey-btn" type="button" class="hotkey-btn">Shift</button>
+      </label>
+      <label class="field">
+        <span>Size scroll sensitivity <strong id="sensitivity-value">4</strong></span>
+        <input
+          id="size-sensitivity"
+          type="range"
+          min="1"
+          max="10"
+          step="1"
+          value="4"
+        />
+      </label>
+      <fieldset class="field brush-persist-field">
+        <legend>Brush color &amp; size</legend>
+        <label class="radio-row">
+          <input
+            type="radio"
+            name="brush-persistence"
+            id="brush-persist-default"
+            value="default"
+          />
+          <span>Use defaults each time</span>
+        </label>
+        <label class="radio-row">
+          <input
+            type="radio"
+            name="brush-persistence"
+            id="brush-persist-remember"
+            value="rememberLast"
+            checked
+          />
+          <span>Remember last used</span>
+        </label>
+      </fieldset>
+      <div id="brush-defaults" class="brush-defaults hidden">
+        <div class="field">
+          <span>Default color</span>
+          <div class="preset-row" id="default-color-presets"></div>
+        </div>
+        <label class="field">
+          <span>Default size <strong id="default-size-value">4</strong></span>
+          <input
+            id="default-size"
+            type="range"
+            min="1"
+            max="80"
+            step="1"
+            value="4"
+          />
+        </label>
+      </div>
+      <p class="hint" id="settings-hint">
+        Shift + scroll changes brush size. Click a hotkey button, then press a new
+        shortcut. Esc cancels. Size change accepts modifier keys only.
+      </p>
+      <div class="settings-actions">
+        <button id="settings-close" type="button">Done</button>
+      </div>
+    </div>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
