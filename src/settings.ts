@@ -17,6 +17,7 @@ export const DEFAULT_PRESET_COLORS = [
 export type Settings = {
   activateHotkey: string;
   colorHotkey: string;
+  shapeHotkey: string;
   sizeScrollHotkey: string;
   toolbarX: number | null;
   toolbarY: number | null;
@@ -30,6 +31,7 @@ export type Settings = {
 const DEFAULTS: Settings = {
   activateHotkey: "Ctrl+Alt+D",
   colorHotkey: "C",
+  shapeHotkey: "S",
   sizeScrollHotkey: "Shift",
   toolbarX: null,
   toolbarY: null,
@@ -82,6 +84,7 @@ export async function loadSettings(): Promise<Settings> {
   }
   const color = normalizeHex(settings.color);
   settings.color = color ?? DEFAULTS.color;
+  settings.shapeHotkey = settings.shapeHotkey || DEFAULTS.shapeHotkey;
   settings.presetColors = normalizePresetColors(
     saved.presetColors !== undefined ? saved.presetColors : DEFAULT_PRESET_COLORS,
   );

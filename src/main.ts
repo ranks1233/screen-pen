@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { DrawingBoard } from "./draw";
+import { DrawingBoard, type Corner, type ShapeKind, type Tool } from "./draw";
 import {
   formatHotkeyFromEvent,
   formatModifierHotkeyFromEvent,
@@ -13,11 +13,12 @@ import {
   type Settings,
 } from "./settings";
 
-type HotkeyTarget = "activate" | "color" | "sizeScroll";
+type HotkeyTarget = "activate" | "color" | "shape" | "sizeScroll";
 
 const canvas = document.getElementById("draw-canvas") as HTMLCanvasElement;
 const toolbar = document.getElementById("toolbar") as HTMLElement;
 const dragHandle = document.getElementById("drag-handle") as HTMLButtonElement;
+const drawBtn = document.getElementById("draw-btn") as HTMLButtonElement;
 const colorBtn = document.getElementById("color-btn") as HTMLButtonElement;
 const colorSwatch = document.getElementById("color-swatch") as HTMLElement;
 const colorPanel = document.getElementById("color-panel") as HTMLElement;
@@ -26,6 +27,9 @@ const colorInput = document.getElementById("color-input") as HTMLInputElement;
 const addPresetBtn = document.getElementById(
   "add-preset-btn",
 ) as HTMLButtonElement;
+const shapeBtn = document.getElementById("shape-btn") as HTMLButtonElement;
+const shapePanel = document.getElementById("shape-panel") as HTMLElement;
+const shapeOptions = document.getElementById("shape-options") as HTMLElement;
 const settingsBtn = document.getElementById("settings-btn") as HTMLButtonElement;
 const settingsPanel = document.getElementById("settings-panel") as HTMLElement;
 const settingsClose = document.getElementById("settings-close") as HTMLButtonElement;
@@ -33,6 +37,9 @@ const settingsHint = document.getElementById("settings-hint") as HTMLElement;
 const hotkeyBtn = document.getElementById("hotkey-btn") as HTMLButtonElement;
 const colorHotkeyBtn = document.getElementById(
   "color-hotkey-btn",
+) as HTMLButtonElement;
+const shapeHotkeyBtn = document.getElementById(
+  "shape-hotkey-btn",
 ) as HTMLButtonElement;
 const sizeHotkeyBtn = document.getElementById(
   "size-hotkey-btn",
@@ -161,12 +168,14 @@ function markSelectedPresets() {
 function hotkeyButton(target: HotkeyTarget): HTMLButtonElement {
   if (target === "activate") return hotkeyBtn;
   if (target === "color") return colorHotkeyBtn;
+  if (target === "shape") return shapeHotkeyBtn;
   return sizeHotkeyBtn;
 }
 
 function hotkeyLabel(target: HotkeyTarget): string {
   if (target === "activate") return settings.activateHotkey;
   if (target === "color") return settings.colorHotkey;
+  if (target === "shape") return settings.shapeHotkey;
   return settings.sizeScrollHotkey;
 }
 
@@ -187,12 +196,13 @@ function stopHotkeyRecording() {
 
 function closePanels() {
   colorPanel.classList.add("hidden");
+  shapePanel.classList.add("hidden");
   settingsPanel.classList.add("hidden");
   stopHotkeyRecording();
 }
 
-function positionPanel(panel: HTMLElement) {
-  const rect = toolbar.getBoundingClientRect();
+function positionPanel(panel: HTMLElement, anchor: HTMLElement = toolbar) {
+  const rect = anchor.getBoundingClientRect();
   const width = panel.offsetWidth || 220;
   let left = rect.left - width - 12;
   if (left < 12) left = rect.right + 12;
@@ -204,19 +214,110 @@ function positionPanel(panel: HTMLElement) {
 }
 
 function toggleColorPanel() {
+  shapePanel.classList.add("hidden");
   settingsPanel.classList.add("hidden");
   stopHotkeyRecording();
   colorPanel.classList.toggle("hidden");
   if (!colorPanel.classList.contains("hidden")) {
     updateAddPresetBtn();
-    positionPanel(colorPanel);
+    positionPanel(colorPanel, colorBtn);
   }
+}
+
+function toggleShapePanel() {
+  colorPanel.classList.add("hidden");
+  settingsPanel.classList.add("hidden");
+  stopHotkeyRecording();
+  shapePanel.classList.toggle("hidden");
+  if (!shapePanel.classList.contains("hidden")) {
+    markSelectedShapeOption();
+    positionPanel(shapePanel, shapeBtn);
+  }
+}
+
+function markSelectedShapeOption() {
+  const tool = board.getTool();
+  for (const btn of shapeOptions.querySelectorAll<HTMLElement>(".shape-option")) {
+    btn.classList.toggle("selected", btn.dataset.shape === tool);
+  }
+  drawBtn.classList.toggle("active", tool === "freehand");
+  shapeBtn.classList.toggle("active", tool !== "freehand");
+}
+
+function setShapeTool(tool: Tool) {
+  board.selectTool(tool);
+  markSelectedShapeOption();
+  updateCanvasCursorClass();
+}
+
+function updateCanvasCursorClass(hoverHandle: Corner | null = null) {
+  canvas.classList.remove(
+    "shape-tool",
+    "resize-nw",
+    "resize-ne",
+    "resize-sw",
+    "resize-se",
+    "thickness-grip",
+    "fill-btn",
+    "opacity-slider",
+  );
+  if (hoverHandle) {
+    canvas.classList.add(`resize-${hoverHandle}`);
+    return;
+  }
+  if (board.getTool() !== "freehand") {
+    canvas.classList.add("shape-tool");
+  }
+}
+
+function updateHoverCursor(point: { x: number; y: number }) {
+  if (board.hitTestOpacitySlider(point)) {
+    canvas.classList.remove(
+      "shape-tool",
+      "resize-nw",
+      "resize-ne",
+      "resize-sw",
+      "resize-se",
+      "thickness-grip",
+      "fill-btn",
+    );
+    canvas.classList.add("opacity-slider");
+    return;
+  }
+  if (board.hitTestFillBtn(point)) {
+    canvas.classList.remove(
+      "shape-tool",
+      "resize-nw",
+      "resize-ne",
+      "resize-sw",
+      "resize-se",
+      "thickness-grip",
+      "opacity-slider",
+    );
+    canvas.classList.add("fill-btn");
+    return;
+  }
+  if (board.hitTestThicknessGrip(point)) {
+    canvas.classList.remove(
+      "shape-tool",
+      "resize-nw",
+      "resize-ne",
+      "resize-sw",
+      "resize-se",
+      "fill-btn",
+      "opacity-slider",
+    );
+    canvas.classList.add("thickness-grip");
+    return;
+  }
+  const handle = board.hitTestHandle(point);
+  updateCanvasCursorClass(handle);
 }
 
 function isUiTarget(target: EventTarget | null): boolean {
   if (!(target instanceof Element)) return false;
   return Boolean(
-    target.closest("#toolbar, #color-panel, #settings-panel"),
+    target.closest("#toolbar, #color-panel, #shape-panel, #settings-panel"),
   );
 }
 
@@ -245,6 +346,7 @@ async function deactivate() {
   active = false;
   document.body.classList.remove("active");
   closePanels();
+  setShapeTool("freehand");
   board.clear();
   await persist();
   await invoke("deactivate_drawing");
@@ -387,21 +489,28 @@ function setupDrawing() {
     if (!active || isUiTarget(e.target)) return;
     if (e.button !== 0) return;
     closePanels();
-    board.startStroke(e);
+    board.pointerDown(e);
+    markSelectedShapeOption();
+    updateCanvasCursorClass();
   });
 
   canvas.addEventListener("pointermove", (e) => {
     if (!active) return;
     board.continueStroke(e);
+    if (e.buttons === 0) {
+      updateHoverCursor({ x: e.clientX, y: e.clientY });
+    }
   });
 
   canvas.addEventListener("pointerup", (e) => {
     if (!active) return;
     board.endStroke(e);
+    updateCanvasCursorClass();
   });
 
   canvas.addEventListener("pointercancel", () => {
     board.endStroke();
+    updateCanvasCursorClass();
   });
 }
 
@@ -439,6 +548,15 @@ async function finishHotkeyRecording(combo: string) {
 
   if (target === "sizeScroll") {
     updateSizeScrollHotkeyUi(combo);
+    btn.classList.remove("recording");
+    recordingHotkey = null;
+    await persist();
+    return;
+  }
+
+  if (target === "shape") {
+    settings.shapeHotkey = combo;
+    btn.textContent = combo;
     btn.classList.remove("recording");
     recordingHotkey = null;
     await persist();
@@ -490,6 +608,12 @@ function setupHotkeys() {
       return;
     }
 
+    if (matchesHotkey(e, settings.shapeHotkey)) {
+      e.preventDefault();
+      toggleShapePanel();
+      return;
+    }
+
     if (e.key === "Shift") {
       board.setShiftHeld(true);
     }
@@ -526,7 +650,9 @@ async function boot() {
   updateBrushPersistenceUi(settings.brushPersistence);
   hotkeyBtn.textContent = settings.activateHotkey;
   colorHotkeyBtn.textContent = settings.colorHotkey;
+  shapeHotkeyBtn.textContent = settings.shapeHotkey;
   updateSizeScrollHotkeyUi(settings.sizeScrollHotkey);
+  markSelectedShapeOption();
   applyToolbarPosition();
   setupToolbarDrag();
   setupDrawing();
@@ -542,6 +668,27 @@ async function boot() {
     toggleColorPanel();
   });
 
+  drawBtn.addEventListener("click", () => {
+    closePanels();
+    setShapeTool("freehand");
+  });
+
+  shapeBtn.addEventListener("click", () => {
+    toggleShapePanel();
+  });
+
+  shapeOptions.addEventListener("click", (e) => {
+    const btn = (e.target as Element).closest<HTMLElement>(".shape-option");
+    if (!btn?.dataset.shape) return;
+    const kind = btn.dataset.shape as ShapeKind;
+    if (board.getTool() === kind) {
+      setShapeTool("freehand");
+    } else {
+      setShapeTool(kind);
+    }
+    shapePanel.classList.add("hidden");
+  });
+
   colorInput.addEventListener("input", async () => {
     updateColorUi(colorInput.value);
     updateSizeUi(board.getSize());
@@ -554,10 +701,11 @@ async function boot() {
 
   settingsBtn.addEventListener("click", () => {
     colorPanel.classList.add("hidden");
+    shapePanel.classList.add("hidden");
     settingsPanel.classList.toggle("hidden");
     if (!settingsPanel.classList.contains("hidden")) {
       updateBrushPersistenceUi(settings.brushPersistence);
-      positionPanel(settingsPanel);
+      positionPanel(settingsPanel, settingsBtn);
     } else {
       stopHotkeyRecording();
     }
@@ -573,6 +721,10 @@ async function boot() {
 
   colorHotkeyBtn.addEventListener("click", () => {
     startHotkeyRecording("color");
+  });
+
+  shapeHotkeyBtn.addEventListener("click", () => {
+    startHotkeyRecording("shape");
   });
 
   sizeHotkeyBtn.addEventListener("click", () => {
@@ -620,6 +772,7 @@ async function boot() {
     active = false;
     document.body.classList.remove("active");
     closePanels();
+    setShapeTool("freehand");
     board.clear();
   });
 
