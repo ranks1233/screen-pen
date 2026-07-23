@@ -1,6 +1,6 @@
 # Screen Pen
 
-Lightweight on-screen drawing for Windows (Tauri), inspired by Epic Pen — fewer features, faster to use.
+Lightweight on-screen drawing for Windows (Tauri).
 
 ## Download & Install (Windows)
 
