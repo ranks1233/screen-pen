@@ -145,6 +145,10 @@
           <span>Activate hotkey</span>
           <button id="hotkey-btn" type="button" class="hotkey-btn">Ctrl+Alt+D</button>
         </label>
+        <label class="field">
+          <span>Disable hotkey</span>
+          <button id="disable-hotkey-btn" type="button" class="hotkey-btn">Ctrl+Alt+Shift+D</button>
+        </label>
         <div class="field">
           <div class="field-label-row">
             <span>Color panel hotkey</span>
@@ -164,42 +168,9 @@
           <button id="shape-hotkey-btn" type="button" class="hotkey-btn">S</button>
         </div>
         <label class="field">
-          <span>Size change modifier for scroll</span>
+          <span>Size change hotkey with scroll</span>
           <button id="size-hotkey-btn" type="button" class="hotkey-btn">Shift</button>
         </label>
-        <label class="field">
-          <span>Size scroll sensitivity <strong id="sensitivity-value">4</strong></span>
-          <input
-            id="size-sensitivity"
-            type="range"
-            min="1"
-            max="10"
-            step="1"
-            value="4"
-          />
-        </label>
-        <label class="field">
-          <span>Line smoothing <strong id="smooth-strength-value">5</strong></span>
-          <input
-            id="smooth-strength"
-            type="range"
-            min="0"
-            max="10"
-            step="1"
-            value="5"
-          />
-        </label>
-        <button
-          id="advanced-settings-toggle"
-          type="button"
-          class="advanced-toggle"
-          aria-expanded="false"
-          aria-controls="advanced-settings"
-        >
-          Advanced settings
-        </button>
-      </div>
-      <div id="advanced-settings" class="advanced-settings hidden">
         <fieldset class="field brush-persist-field">
           <legend>Line settings</legend>
           <label class="radio-row">
@@ -217,14 +188,6 @@
               checked
             />
             <span>Opacity handle</span>
-          </label>
-          <label class="radio-row">
-            <input
-              type="checkbox"
-              id="apply-thickness-to-brush"
-              checked
-            />
-            <span>Apply handle thickness to brush size</span>
           </label>
         </fieldset>
         <fieldset class="field brush-persist-field">
@@ -245,6 +208,72 @@
             />
             <span>Opacity handle</span>
           </label>
+        </fieldset>
+        <button
+          id="advanced-settings-toggle"
+          type="button"
+          class="advanced-toggle"
+          aria-expanded="false"
+          aria-controls="advanced-settings"
+        >
+          Advanced settings
+        </button>
+      </div>
+      <div id="advanced-settings" class="advanced-settings hidden">
+        <label class="field">
+          <span>Size scroll sensitivity <strong id="sensitivity-value">4</strong></span>
+          <input
+            id="size-sensitivity"
+            type="range"
+            min="1"
+            max="10"
+            step="1"
+            value="4"
+          />
+        </label>
+        <label class="field">
+          <span>Line smoothing strength <strong id="smooth-strength-value">5</strong></span>
+          <input
+            id="smooth-strength"
+            type="range"
+            min="0"
+            max="10"
+            step="1"
+            value="5"
+          />
+        </label>
+        <label class="field">
+          <span>Node &amp; handle size <strong id="handle-size-value">100%</strong></span>
+          <input
+            id="handle-size-scale"
+            type="range"
+            min="50"
+            max="200"
+            step="25"
+            value="100"
+          />
+        </label>
+        <fieldset class="field brush-persist-field">
+          <legend>Line settings</legend>
+          <label class="radio-row">
+            <input
+              type="checkbox"
+              id="apply-thickness-to-brush"
+              checked
+            />
+            <span>Apply handle thickness to brush size</span>
+          </label>
+          <label class="radio-row">
+            <input
+              type="checkbox"
+              id="show-path-endpoint-handles"
+              checked
+            />
+            <span>Start/end nodes on straight lines &amp; straight arrows</span>
+          </label>
+        </fieldset>
+        <fieldset class="field brush-persist-field">
+          <legend>Shape settings</legend>
           <label class="radio-row">
             <input
               type="checkbox"
@@ -347,6 +376,14 @@
       <div class="settings-actions">
         <button id="settings-close" type="button">Done</button>
       </div>
+      <div class="settings-resize-handle" data-resize="n" aria-hidden="true"></div>
+      <div class="settings-resize-handle" data-resize="e" aria-hidden="true"></div>
+      <div class="settings-resize-handle" data-resize="s" aria-hidden="true"></div>
+      <div class="settings-resize-handle" data-resize="w" aria-hidden="true"></div>
+      <div class="settings-resize-handle" data-resize="ne" aria-hidden="true"></div>
+      <div class="settings-resize-handle" data-resize="nw" aria-hidden="true"></div>
+      <div class="settings-resize-handle" data-resize="se" aria-hidden="true"></div>
+      <div class="settings-resize-handle" data-resize="sw" aria-hidden="true"></div>
     </div>
 
     <script type="module" src="/src/main.ts"></script>

@@ -51,12 +51,17 @@ function isShapeStroke(item: Drawable): item is ShapeStroke {
 }
 
 export type Corner = "nw" | "ne" | "sw" | "se";
+/** Start/end nodes on straight lines and straight arrows. */
+export type PathEndpoint = "start" | "end";
 
 const SNAP_STEP = Math.PI / 4; // 45 degrees
+/** Base sizes at handleScale = 1 (100%). Spacing scales with size so controls never overlap. */
 const HANDLE_SIZE = 10;
 const HANDLE_HIT = 14;
 const THICKNESS_GRIP_SIZE = 18;
 const THICKNESS_GRIP_HIT = 16;
+/** Center-to-center distance from an endpoint node to the tip pivot / size grip. */
+const NODE_CONTROL_OFFSET = 28;
 /** Extra gap past the pivot handle edge when size/opacity controls stack. */
 const PIVOT_HANDLE_CLEARANCE = 8;
 const OPACITY_KNOB_RADIUS = 6;
@@ -64,6 +69,18 @@ const FILL_BTN_SIZE = 18;
 const FILL_BTN_HIT = 16;
 const OPACITY_SLIDER_HEIGHT = 72;
 const OPACITY_SLIDER_HIT_W = 14;
+/** Lateral offset from geometry edge to fill / opacity controls. */
+const EDGE_OFFSET = 14;
+/** Gap between adjacent selection controls. */
+const CONTROL_GAP = 8;
+const OPACITY_HIT_PAD = 8;
+
+/** Current selection-chrome scale (1 = default). Set via DrawingBoard.setHandleSizeScale. */
+let handleScale = 1;
+
+function hs(base: number): number {
+  return base * handleScale;
+}
 const DEFAULT_FILL_OPACITY = 0.4;
 const DEFAULT_STROKE_OPACITY = 1;
 const MIN_SHAPE_SIZE = 1;
@@ -486,6 +503,7 @@ export function drawShape(
   ctx: CanvasRenderingContext2D,
   shape: ShapeStroke,
   preview = false,
+  opaqueFill = false,
 ) {
   const b = shapeBounds(shape);
   if (b.width < 0.5 && b.height < 0.5) return;
@@ -524,7 +542,9 @@ export function drawShape(
   }
 
   if (shape.filled) {
-    const fillAlpha = Math.max(0, Math.min(1, shape.fillOpacity ?? DEFAULT_FILL_OPACITY));
+    const fillAlpha = opaqueFill
+      ? 1
+      : Math.max(0, Math.min(1, shape.fillOpacity ?? DEFAULT_FILL_OPACITY));
     ctx.globalAlpha = (preview ? 0.85 : 1) * fillAlpha;
     ctx.fill();
   }
@@ -536,7 +556,8 @@ export function drawShape(
 
 function drawHandles(ctx: CanvasRenderingContext2D, shape: ShapeStroke) {
   const corners = shapeCorners(shape);
-  const half = HANDLE_SIZE / 2;
+  const size = hs(HANDLE_SIZE);
+  const half = size / 2;
 
   ctx.save();
   for (const point of Object.values(corners)) {
@@ -544,7 +565,46 @@ function drawHandles(ctx: CanvasRenderingContext2D, shape: ShapeStroke) {
     ctx.strokeStyle = "#2f6fed";
     ctx.lineWidth = 1.5;
     ctx.beginPath();
-    ctx.rect(point.x - half, point.y - half, HANDLE_SIZE, HANDLE_SIZE);
+    ctx.rect(point.x - half, point.y - half, size, size);
+    ctx.fill();
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+/** Straight freehand/arrow strokes (exactly 2 points) get start/end nodes. */
+function pathShowsEndpointHandles(stroke: PathStroke): boolean {
+  return stroke.points.length === 2;
+}
+
+function pathEndpointPoint(
+  stroke: PathStroke,
+  endpoint: PathEndpoint,
+): Point | null {
+  if (stroke.points.length < 2) return null;
+  return endpoint === "start"
+    ? stroke.points[0]
+    : stroke.points[stroke.points.length - 1];
+}
+
+function drawPathEndpointHandles(
+  ctx: CanvasRenderingContext2D,
+  stroke: PathStroke,
+) {
+  if (!pathShowsEndpointHandles(stroke)) return;
+  const size = hs(HANDLE_SIZE);
+  const half = size / 2;
+  const start = pathEndpointPoint(stroke, "start");
+  const end = pathEndpointPoint(stroke, "end");
+  if (!start || !end) return;
+
+  ctx.save();
+  for (const point of [start, end]) {
+    ctx.fillStyle = "#ffffff";
+    ctx.strokeStyle = "#2f6fed";
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.rect(point.x - half, point.y - half, size, size);
     ctx.fill();
     ctx.stroke();
   }
@@ -565,8 +625,8 @@ function arrowTipPivotCenter(stroke: PathStroke): Point | null {
   if (!head) return null;
   const ux = Math.cos(head.angle);
   const uy = Math.sin(head.angle);
-  // Small distance past the tip vertex so the handle sits outside the tip
-  const ahead = HANDLE_SIZE * 1.6;
+  // Past the tip node so the pivot doesn't sit on top of the endpoint handle
+  const ahead = hs(NODE_CONTROL_OFFSET);
   return {
     x: head.tip.x + ux * ahead,
     y: head.tip.y + uy * ahead,
@@ -589,7 +649,7 @@ function drawArrowTipPivot(ctx: CanvasRenderingContext2D, stroke: PathStroke) {
   ctx.stroke();
 
   ctx.beginPath();
-  ctx.arc(c.x, c.y, HANDLE_SIZE / 2, 0, Math.PI * 2);
+  ctx.arc(c.x, c.y, hs(HANDLE_SIZE) / 2, 0, Math.PI * 2);
   ctx.fillStyle = "#2f6fed";
   ctx.strokeStyle = "#ffffff";
   ctx.lineWidth = 1.5;
@@ -657,15 +717,15 @@ function thicknessGripCenter(
   avoidPivot: Point | null = null,
 ): Point {
   const p = leftmostPoint(item);
-  let center = { x: p.x - 14, y: p.y };
+  let center = { x: p.x - hs(NODE_CONTROL_OFFSET), y: p.y };
 
   // Pivot wins: push the size handle straight left when they would stack.
   if (avoidPivot) {
-    const gripR = THICKNESS_GRIP_SIZE / 2;
-    const pivotR = HANDLE_SIZE / 2;
-    const clearX =
-      avoidPivot.x - pivotR - PIVOT_HANDLE_CLEARANCE - gripR;
-    const stackY = gripR + pivotR + PIVOT_HANDLE_CLEARANCE;
+    const gripR = hs(THICKNESS_GRIP_SIZE) / 2;
+    const pivotR = hs(HANDLE_SIZE) / 2;
+    const clearance = hs(PIVOT_HANDLE_CLEARANCE);
+    const clearX = avoidPivot.x - pivotR - clearance - gripR;
+    const stackY = gripR + pivotR + clearance;
     if (
       Math.abs(center.y - avoidPivot.y) <= stackY &&
       center.x > clearX
@@ -677,14 +737,9 @@ function thicknessGripCenter(
   return center;
 }
 
-function fillBtnCenter(
-  shape: ShapeStroke,
-  opacitySliderVisible = itemShowsOpacitySlider(shape),
-): Point {
+function fillBtnCenter(shape: ShapeStroke): Point {
   const p = shapeExtremePoint(shape, "right");
-  // Sit just past the opacity slider when it occupies the rightmost slot.
-  const gap = opacitySliderVisible ? 36 : 14;
-  return { x: p.x + gap, y: p.y };
+  return { x: p.x + hs(EDGE_OFFSET), y: p.y };
 }
 
 function opacitySliderBounds(
@@ -696,19 +751,34 @@ function opacitySliderBounds(
   bottom: number;
   midY: number;
 } {
-  const half = OPACITY_SLIDER_HEIGHT / 2;
-  const p = rightmostPoint(item);
-  let x = p.x + 14;
-  const midY = p.y;
+  const half = hs(OPACITY_SLIDER_HEIGHT) / 2;
+  let x: number;
+  let midY: number;
 
-  // Pivot wins: push the opacity slider straight right when they would stack.
-  if (avoidPivot) {
-    const pivotR = HANDLE_SIZE / 2;
-    const clearX =
-      avoidPivot.x + pivotR + PIVOT_HANDLE_CLEARANCE + OPACITY_KNOB_RADIUS;
-    const stackY = half + pivotR + PIVOT_HANDLE_CLEARANCE;
-    if (Math.abs(midY - avoidPivot.y) <= stackY && x < clearX) {
-      x = clearX;
+  if (isShapeStroke(item)) {
+    // Sit to the right of the fill button so toggling fill doesn't shift it.
+    const fill = fillBtnCenter(item);
+    x =
+      fill.x +
+      hs(FILL_BTN_SIZE) / 2 +
+      hs(CONTROL_GAP) +
+      hs(OPACITY_KNOB_RADIUS);
+    midY = fill.y;
+  } else {
+    const p = rightmostPoint(item);
+    x = p.x + hs(EDGE_OFFSET);
+    midY = p.y;
+
+    // Pivot wins: push the opacity slider straight right when they would stack.
+    if (avoidPivot) {
+      const pivotR = hs(HANDLE_SIZE) / 2;
+      const clearance = hs(PIVOT_HANDLE_CLEARANCE);
+      const clearX =
+        avoidPivot.x + pivotR + clearance + hs(OPACITY_KNOB_RADIUS);
+      const stackY = half + pivotR + clearance;
+      if (Math.abs(midY - avoidPivot.y) <= stackY && x < clearX) {
+        x = clearX;
+      }
     }
   }
 
@@ -747,7 +817,7 @@ function drawThicknessGrip(
   avoidPivot: Point | null = null,
 ) {
   const c = thicknessGripCenter(item, avoidPivot);
-  const r = THICKNESS_GRIP_SIZE / 2;
+  const r = hs(THICKNESS_GRIP_SIZE) / 2;
 
   ctx.save();
   ctx.fillStyle = "rgba(28, 30, 34, 0.92)";
@@ -767,33 +837,29 @@ function drawThicknessGrip(
 
   // Left chevron
   ctx.beginPath();
-  ctx.moveTo(c.x - 2, c.y - 3.5);
-  ctx.lineTo(c.x - 5.5, c.y);
-  ctx.lineTo(c.x - 2, c.y + 3.5);
+  ctx.moveTo(c.x - hs(2), c.y - hs(3.5));
+  ctx.lineTo(c.x - hs(5.5), c.y);
+  ctx.lineTo(c.x - hs(2), c.y + hs(3.5));
   ctx.stroke();
 
   // Center stroke sample
   ctx.beginPath();
-  ctx.arc(c.x, c.y, Math.min(2.5, item.size / 4 + 1), 0, Math.PI * 2);
+  ctx.arc(c.x, c.y, Math.min(hs(2.5), item.size / 4 + 1), 0, Math.PI * 2);
   ctx.fill();
 
   // Right chevron
   ctx.beginPath();
-  ctx.moveTo(c.x + 2, c.y - 3.5);
-  ctx.lineTo(c.x + 5.5, c.y);
-  ctx.lineTo(c.x + 2, c.y + 3.5);
+  ctx.moveTo(c.x + hs(2), c.y - hs(3.5));
+  ctx.lineTo(c.x + hs(5.5), c.y);
+  ctx.lineTo(c.x + hs(2), c.y + hs(3.5));
   ctx.stroke();
 
   ctx.restore();
 }
 
-function drawFillBtn(
-  ctx: CanvasRenderingContext2D,
-  shape: ShapeStroke,
-  opacitySliderVisible = itemShowsOpacitySlider(shape),
-) {
-  const c = fillBtnCenter(shape, opacitySliderVisible);
-  const r = FILL_BTN_SIZE / 2;
+function drawFillBtn(ctx: CanvasRenderingContext2D, shape: ShapeStroke) {
+  const c = fillBtnCenter(shape);
+  const r = hs(FILL_BTN_SIZE) / 2;
 
   ctx.save();
   ctx.fillStyle = shape.filled ? "rgba(47, 111, 237, 0.95)" : "rgba(28, 30, 34, 0.92)";
@@ -813,23 +879,29 @@ function drawFillBtn(
 
   // Bucket body
   ctx.beginPath();
-  ctx.moveTo(c.x - 3.5, c.y - 1);
-  ctx.lineTo(c.x + 3.5, c.y - 1);
-  ctx.lineTo(c.x + 2.2, c.y + 4);
-  ctx.lineTo(c.x - 2.2, c.y + 4);
+  ctx.moveTo(c.x - hs(3.5), c.y - hs(1));
+  ctx.lineTo(c.x + hs(3.5), c.y - hs(1));
+  ctx.lineTo(c.x + hs(2.2), c.y + hs(4));
+  ctx.lineTo(c.x - hs(2.2), c.y + hs(4));
   ctx.closePath();
   ctx.fill();
 
   // Bucket handle
   ctx.beginPath();
-  ctx.arc(c.x + 3.2, c.y - 2.2, 2.2, -Math.PI * 0.85, -Math.PI * 0.15);
+  ctx.arc(
+    c.x + hs(3.2),
+    c.y - hs(2.2),
+    hs(2.2),
+    -Math.PI * 0.85,
+    -Math.PI * 0.15,
+  );
   ctx.stroke();
 
   // Tip drip
   ctx.beginPath();
-  ctx.moveTo(c.x - 1.5, c.y - 1);
-  ctx.lineTo(c.x - 3.5, c.y - 4);
-  ctx.lineTo(c.x + 0.5, c.y - 1);
+  ctx.moveTo(c.x - hs(1.5), c.y - hs(1));
+  ctx.lineTo(c.x - hs(3.5), c.y - hs(4));
+  ctx.lineTo(c.x + hs(0.5), c.y - hs(1));
   ctx.fill();
 
   ctx.restore();
@@ -842,13 +914,14 @@ function drawOpacitySlider(
 ) {
   const s = opacitySliderBounds(item, avoidPivot);
   const knobY = opacityKnobY(item, avoidPivot);
+  const trackW = Math.max(3, hs(4));
 
   ctx.save();
   ctx.lineCap = "round";
 
   // Track background
   ctx.strokeStyle = "rgba(28, 30, 34, 0.55)";
-  ctx.lineWidth = 4;
+  ctx.lineWidth = trackW;
   ctx.beginPath();
   ctx.moveTo(s.x, s.top);
   ctx.lineTo(s.x, s.bottom);
@@ -856,7 +929,7 @@ function drawOpacitySlider(
 
   // Filled portion (from knob to bottom = current opacity)
   ctx.strokeStyle = "#2f6fed";
-  ctx.lineWidth = 4;
+  ctx.lineWidth = trackW;
   ctx.beginPath();
   ctx.moveTo(s.x, knobY);
   ctx.lineTo(s.x, s.bottom);
@@ -867,7 +940,7 @@ function drawOpacitySlider(
   ctx.strokeStyle = "#2f6fed";
   ctx.lineWidth = 1.5;
   ctx.beginPath();
-  ctx.arc(s.x, knobY, OPACITY_KNOB_RADIUS, 0, Math.PI * 2);
+  ctx.arc(s.x, knobY, hs(OPACITY_KNOB_RADIUS), 0, Math.PI * 2);
   ctx.fill();
   ctx.stroke();
 
@@ -878,11 +951,12 @@ function drawDrawable(
   ctx: CanvasRenderingContext2D,
   item: Drawable,
   preview = false,
+  opaqueShapeFill = false,
 ) {
   if (isPathStroke(item)) {
     drawStroke(ctx, item, preview);
   } else {
-    drawShape(ctx, item, preview);
+    drawShape(ctx, item, preview, opaqueShapeFill);
   }
 }
 
@@ -910,6 +984,7 @@ export class DrawingBoard {
   /** Fixed tip-base center while rotating the tip pivot handle. */
   private tipPivotBase: Point | null = null;
   private tipPivotLen = 0;
+  private adjustingEndpoint: PathEndpoint | null = null;
   private showLineThicknessHandle = true;
   private showLineOpacityHandle = true;
   private showShapeThicknessHandle = true;
@@ -917,6 +992,7 @@ export class DrawingBoard {
   private applyThicknessToBrush = true;
   private returnToFreehandAfterShape = true;
   private showArrowTipPivot = true;
+  private showPathEndpointHandles = true;
   private smoothStrength = 5;
 
   constructor(canvas: HTMLCanvasElement) {
@@ -955,6 +1031,14 @@ export class DrawingBoard {
     this.smoothStrength = Math.max(0, Math.min(10, Math.round(strength)));
   }
 
+  /** Percent of default chrome size (50–200). Scales nodes, handles, and spacing together. */
+  setHandleSizeScale(percent: number) {
+    const stepped = Math.round(percent / 25) * 25;
+    const clamped = Math.max(50, Math.min(200, stepped));
+    handleScale = clamped / 100;
+    this.redraw();
+  }
+
   setShowLineThicknessHandle(show: boolean) {
     this.showLineThicknessHandle = show;
     this.redraw();
@@ -985,6 +1069,11 @@ export class DrawingBoard {
 
   setShowArrowTipPivot(show: boolean) {
     this.showArrowTipPivot = show;
+    this.redraw();
+  }
+
+  setShowPathEndpointHandles(show: boolean) {
+    this.showPathEndpointHandles = show;
     this.redraw();
   }
 
@@ -1025,11 +1114,12 @@ export class DrawingBoard {
     const item = this.items[this.selectedIndex];
     if (!item || !isShapeStroke(item)) return null;
 
+    const hit = hs(HANDLE_HIT);
     const corners = shapeCorners(item);
     for (const [corner, c] of Object.entries(corners) as [Corner, Point][]) {
       if (
-        Math.abs(point.x - c.x) <= HANDLE_HIT &&
-        Math.abs(point.y - c.y) <= HANDLE_HIT
+        Math.abs(point.x - c.x) <= hit &&
+        Math.abs(point.y - c.y) <= hit
       ) {
         return corner;
       }
@@ -1044,7 +1134,35 @@ export class DrawingBoard {
     if (!item || !isPathStroke(item) || item.kind !== "arrow") return false;
     const c = arrowTipPivotCenter(item);
     if (!c) return false;
-    return Math.hypot(point.x - c.x, point.y - c.y) <= HANDLE_HIT;
+    return Math.hypot(point.x - c.x, point.y - c.y) <= hs(HANDLE_HIT);
+  }
+
+  hitTestPathEndpoint(point: Point): PathEndpoint | null {
+    if (!this.showPathEndpointHandles) return null;
+    if (this.selectedIndex == null) return null;
+    const item = this.items[this.selectedIndex];
+    if (!item || !isPathStroke(item) || !pathShowsEndpointHandles(item)) {
+      return null;
+    }
+
+    const hit = hs(HANDLE_HIT);
+    const end = pathEndpointPoint(item, "end");
+    if (
+      end &&
+      Math.abs(point.x - end.x) <= hit &&
+      Math.abs(point.y - end.y) <= hit
+    ) {
+      return "end";
+    }
+    const start = pathEndpointPoint(item, "start");
+    if (
+      start &&
+      Math.abs(point.x - start.x) <= hit &&
+      Math.abs(point.y - start.y) <= hit
+    ) {
+      return "start";
+    }
+    return null;
   }
 
   hitTestThicknessGrip(point: Point): boolean {
@@ -1064,7 +1182,7 @@ export class DrawingBoard {
         ? arrowTipPivotCenter(item)
         : null;
     const c = thicknessGripCenter(item, avoid);
-    return Math.hypot(point.x - c.x, point.y - c.y) <= THICKNESS_GRIP_HIT;
+    return Math.hypot(point.x - c.x, point.y - c.y) <= hs(THICKNESS_GRIP_HIT);
   }
 
   hitTestFillBtn(point: Point): boolean {
@@ -1072,10 +1190,8 @@ export class DrawingBoard {
     const item = this.items[this.selectedIndex];
     if (!item || !isShapeStroke(item)) return false;
 
-    const opacityVisible =
-      this.showShapeOpacityHandle && itemShowsOpacitySlider(item);
-    const c = fillBtnCenter(item, opacityVisible);
-    return Math.hypot(point.x - c.x, point.y - c.y) <= FILL_BTN_HIT;
+    const c = fillBtnCenter(item);
+    return Math.hypot(point.x - c.x, point.y - c.y) <= hs(FILL_BTN_HIT);
   }
 
   hitTestOpacitySlider(point: Point): boolean {
@@ -1095,10 +1211,12 @@ export class DrawingBoard {
         ? arrowTipPivotCenter(item)
         : null;
     const s = opacitySliderBounds(item, avoid);
+    const hitW = hs(OPACITY_SLIDER_HIT_W);
+    const pad = hs(OPACITY_HIT_PAD);
     return (
-      Math.abs(point.x - s.x) <= OPACITY_SLIDER_HIT_W &&
-      point.y >= s.top - 8 &&
-      point.y <= s.bottom + 8
+      Math.abs(point.x - s.x) <= hitW &&
+      point.y >= s.top - pad &&
+      point.y <= s.bottom + pad
     );
   }
 
@@ -1156,6 +1274,7 @@ export class DrawingBoard {
     this.adjustingTipPivot = false;
     this.tipPivotBase = null;
     this.tipPivotLen = 0;
+    this.adjustingEndpoint = null;
     this.releaseCapture();
     this.redraw();
   }
@@ -1255,8 +1374,12 @@ export class DrawingBoard {
       const shape = this.items[this.selectedIndex];
       if (shape && isShapeStroke(shape)) {
         shape.filled = !shape.filled;
-        if (shape.filled && shape.fillOpacity == null) {
-          shape.fillOpacity = DEFAULT_FILL_OPACITY;
+        if (shape.filled) {
+          if (!this.showShapeOpacityHandle) {
+            shape.fillOpacity = 1;
+          } else if (shape.fillOpacity == null) {
+            shape.fillOpacity = DEFAULT_FILL_OPACITY;
+          }
         }
         this.redraw();
         return true;
@@ -1291,6 +1414,18 @@ export class DrawingBoard {
         } else {
           this.resizeAnchor = shapeCorners(shape)[oppositeCorner(handle)];
         }
+        this.activePointerId = e.pointerId;
+        this.canvas.setPointerCapture(e.pointerId);
+        return true;
+      }
+    }
+
+    const endpoint = this.hitTestPathEndpoint(point);
+    if (endpoint && this.selectedIndex != null) {
+      const item = this.items[this.selectedIndex];
+      if (item && isPathStroke(item) && pathShowsEndpointHandles(item)) {
+        this.drawing = true;
+        this.adjustingEndpoint = endpoint;
         this.activePointerId = e.pointerId;
         this.canvas.setPointerCapture(e.pointerId);
         return true;
@@ -1418,6 +1553,26 @@ export class DrawingBoard {
       return;
     }
 
+    if (this.adjustingEndpoint && this.selectedIndex != null) {
+      const item = this.items[this.selectedIndex];
+      if (item && isPathStroke(item) && item.points.length >= 2) {
+        const idx =
+          this.adjustingEndpoint === "start" ? 0 : item.points.length - 1;
+        const anchorIdx =
+          this.adjustingEndpoint === "start" ? item.points.length - 1 : 0;
+        const next = this.shiftHeld
+          ? snapPointToAngle(item.points[anchorIdx], point)
+          : point;
+        item.points[idx] = { ...next };
+        // Moving an endpoint invalidates a custom tip angle; head follows path.
+        if (item.kind === "arrow") {
+          item.tipAngle = undefined;
+        }
+        this.redraw();
+      }
+      return;
+    }
+
     if (!this.current) return;
 
     if (!isPathStroke(this.current)) {
@@ -1487,6 +1642,14 @@ export class DrawingBoard {
       return false;
     }
 
+    if (this.adjustingEndpoint) {
+      this.releaseCapture();
+      this.adjustingEndpoint = null;
+      this.drawing = false;
+      this.redraw();
+      return false;
+    }
+
     if (!this.current) {
       this.drawing = false;
       this.releaseCapture();
@@ -1550,15 +1713,19 @@ export class DrawingBoard {
 
   redraw() {
     this.ctx.clearRect(0, 0, window.innerWidth, window.innerHeight);
+    const opaqueShapeFill = !this.showShapeOpacityHandle;
     for (const item of this.items) {
-      drawDrawable(this.ctx, item);
+      drawDrawable(this.ctx, item, false, opaqueShapeFill);
     }
     if (this.current) {
-      drawDrawable(this.ctx, this.current, true);
+      drawDrawable(this.ctx, this.current, true, opaqueShapeFill);
     }
     if (this.selectedIndex != null) {
       const selected = this.items[this.selectedIndex];
       if (selected && isPathStroke(selected)) {
+        if (this.showPathEndpointHandles && pathShowsEndpointHandles(selected)) {
+          drawPathEndpointHandles(this.ctx, selected);
+        }
         if (selected.kind === "arrow" && this.showArrowTipPivot) {
           drawArrowTipPivot(this.ctx, selected);
         }
@@ -1579,7 +1746,7 @@ export class DrawingBoard {
         }
         const opacityVisible =
           this.showShapeOpacityHandle && selected.filled;
-        drawFillBtn(this.ctx, selected, opacityVisible);
+        drawFillBtn(this.ctx, selected);
         if (opacityVisible) {
           drawOpacitySlider(this.ctx, selected);
         }

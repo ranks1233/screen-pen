@@ -25,6 +25,14 @@ export type Settings = {
   toolbarY: number | null;
   settingsX: number | null;
   settingsY: number | null;
+  /** Basic settings panel size (null height = fit content). */
+  settingsWidth: number | null;
+  settingsHeight: number | null;
+  advancedSettingsX: number | null;
+  advancedSettingsY: number | null;
+  /** Advanced settings panel size (null height = fit content). */
+  advancedSettingsWidth: number | null;
+  advancedSettingsHeight: number | null;
   color: string;
   brushSize: number;
   sizeScrollSensitivity: number;
@@ -41,6 +49,12 @@ export type Settings = {
   returnToFreehandAfterShape: boolean;
   /** Show the tip pivot handle on selected arrows. */
   showArrowTipPivot: boolean;
+  /** Show moveable start/end nodes on straight lines and straight arrows. */
+  showPathEndpointHandles: boolean;
+  /** Selection node/handle size as percent of default (50–200). Spacing scales with it. */
+  handleSizeScale: number;
+  /** Global hotkey that disables the app (tray stays, drawing blocked). */
+  disableHotkey: string;
 };
 
 const DEFAULTS: Settings = {
@@ -54,6 +68,12 @@ const DEFAULTS: Settings = {
   toolbarY: null,
   settingsX: null,
   settingsY: null,
+  settingsWidth: null,
+  settingsHeight: null,
+  advancedSettingsX: null,
+  advancedSettingsY: null,
+  advancedSettingsWidth: null,
+  advancedSettingsHeight: null,
   color: "#ff2d2d",
   brushSize: 4,
   sizeScrollSensitivity: 4,
@@ -67,6 +87,9 @@ const DEFAULTS: Settings = {
   applyThicknessToBrush: true,
   returnToFreehandAfterShape: true,
   showArrowTipPivot: true,
+  showPathEndpointHandles: true,
+  handleSizeScale: 100,
+  disableHotkey: "Ctrl+Alt+Shift+D",
 };
 
 const store = new LazyStore("settings.json");
@@ -90,6 +113,27 @@ function normalizePresetColors(colors: unknown): string[] {
     out.push(hex);
   }
   return out;
+}
+
+/** Clamp selection-handle size percent (50–200, step 25). */
+export function clampHandleSizeScale(percent: number): number {
+  const stepped = Math.round(percent / 25) * 25;
+  return Math.max(50, Math.min(200, stepped));
+}
+
+export const SETTINGS_PANEL_MIN_WIDTH = 220;
+export const SETTINGS_PANEL_MIN_HEIGHT = 160;
+export const SETTINGS_PANEL_DEFAULT_WIDTH = 250;
+
+function normalizePanelSize(value: unknown): number | null {
+  if (typeof value !== "number" || !Number.isFinite(value)) return null;
+  const rounded = Math.round(value);
+  return rounded > 0 ? rounded : null;
+}
+
+function normalizePanelPosition(value: unknown): number | null {
+  if (typeof value !== "number" || !Number.isFinite(value)) return null;
+  return Math.round(value);
 }
 
 export async function loadSettings(): Promise<Settings> {
@@ -160,6 +204,19 @@ export async function loadSettings(): Promise<Settings> {
     typeof settings.showArrowTipPivot === "boolean"
       ? settings.showArrowTipPivot
       : DEFAULTS.showArrowTipPivot;
+  settings.showPathEndpointHandles =
+    typeof settings.showPathEndpointHandles === "boolean"
+      ? settings.showPathEndpointHandles
+      : DEFAULTS.showPathEndpointHandles;
+  settings.handleSizeScale = clampHandleSizeScale(
+    typeof settings.handleSizeScale === "number"
+      ? settings.handleSizeScale
+      : DEFAULTS.handleSizeScale,
+  );
+  settings.disableHotkey =
+    typeof settings.disableHotkey === "string" && settings.disableHotkey.trim()
+      ? settings.disableHotkey
+      : DEFAULTS.disableHotkey;
   delete (settings as { showThicknessHandle?: boolean }).showThicknessHandle;
   delete (settings as { showOpacityHandle?: boolean }).showOpacityHandle;
   settings.colorHotkeyEnabled =
@@ -170,6 +227,18 @@ export async function loadSettings(): Promise<Settings> {
     typeof settings.shapeHotkeyEnabled === "boolean"
       ? settings.shapeHotkeyEnabled
       : DEFAULTS.shapeHotkeyEnabled;
+  settings.settingsWidth = normalizePanelSize(settings.settingsWidth);
+  settings.settingsHeight = normalizePanelSize(settings.settingsHeight);
+  settings.settingsX = normalizePanelPosition(settings.settingsX);
+  settings.settingsY = normalizePanelPosition(settings.settingsY);
+  settings.advancedSettingsX = normalizePanelPosition(settings.advancedSettingsX);
+  settings.advancedSettingsY = normalizePanelPosition(settings.advancedSettingsY);
+  settings.advancedSettingsWidth = normalizePanelSize(
+    settings.advancedSettingsWidth,
+  );
+  settings.advancedSettingsHeight = normalizePanelSize(
+    settings.advancedSettingsHeight,
+  );
   const color = normalizeHex(settings.color);
   settings.color = color ?? DEFAULTS.color;
   settings.shapeHotkey = settings.shapeHotkey || DEFAULTS.shapeHotkey;

@@ -147,12 +147,94 @@ body.active {
 }
 
 #settings-panel {
-  cursor: grab;
+  cursor: default;
   display: flex;
   flex-direction: column;
+  align-items: stretch;
+  width: 250px;
+  min-width: 220px;
+  min-height: 160px;
+  max-width: calc(100vw - 16px);
   max-height: calc(100vh - 24px);
   overflow: hidden;
   padding-bottom: 12px;
+}
+
+#settings-panel .settings-scroll,
+#settings-panel .panel-header,
+#settings-panel .settings-actions {
+  width: 100%;
+  text-align: left;
+}
+
+.settings-resize-handle {
+  position: absolute;
+  z-index: 3;
+  touch-action: none;
+}
+
+.settings-resize-handle[data-resize="n"],
+.settings-resize-handle[data-resize="s"] {
+  left: 14px;
+  right: 14px;
+  height: 14px;
+  cursor: ns-resize;
+}
+
+.settings-resize-handle[data-resize="e"],
+.settings-resize-handle[data-resize="w"] {
+  top: 14px;
+  bottom: 14px;
+  width: 14px;
+  cursor: ew-resize;
+}
+
+.settings-resize-handle[data-resize="n"] {
+  top: -7px;
+}
+
+.settings-resize-handle[data-resize="s"] {
+  bottom: -7px;
+}
+
+.settings-resize-handle[data-resize="e"] {
+  right: -7px;
+}
+
+.settings-resize-handle[data-resize="w"] {
+  left: -7px;
+}
+
+.settings-resize-handle[data-resize="ne"],
+.settings-resize-handle[data-resize="nw"],
+.settings-resize-handle[data-resize="se"],
+.settings-resize-handle[data-resize="sw"] {
+  width: 20px;
+  height: 20px;
+}
+
+.settings-resize-handle[data-resize="ne"] {
+  top: -8px;
+  right: -8px;
+  cursor: nesw-resize;
+}
+
+.settings-resize-handle[data-resize="nw"] {
+  top: -8px;
+  left: -8px;
+  cursor: nwse-resize;
+}
+
+.settings-resize-handle[data-resize="se"] {
+  right: -8px;
+  bottom: -8px;
+  cursor: nwse-resize;
+}
+
+.settings-resize-handle[data-resize="sw"] {
+  left: -8px;
+  bottom: -8px;
+  cursor: nesw-resize;
 }
 
 /* ID rule above beats `.panel.hidden`; keep hide working. */
@@ -160,8 +242,19 @@ body.active {
   display: none;
 }
 
-#settings-panel:active {
+#settings-panel .panel-header,
+#settings-panel .settings-actions {
+  cursor: grab;
+}
+
+#settings-panel.dragging,
+#settings-panel.dragging .panel-header,
+#settings-panel.dragging .settings-actions {
   cursor: grabbing;
+}
+
+#settings-panel.resizing {
+  cursor: inherit;
 }
 
 #settings-panel button,
@@ -181,8 +274,8 @@ body.active {
   min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
-  padding-right: 2px;
-  margin-right: -2px;
+  padding-right: 12px;
+  margin-right: 0;
 }
 
 .settings-scroll::-webkit-scrollbar {
@@ -354,6 +447,12 @@ body.active {
 
 #settings-basic.hidden {
   display: none;
+}
+
+.color-editing {
+  margin-top: 4px;
+  padding-top: 14px;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
 }
 
 .color-editing > .field {
@@ -562,6 +661,11 @@ body.active {
     margin-bottom: 4px;
   }
 
+  .color-editing {
+    margin-top: 2px;
+    padding-top: 10px;
+  }
+
   .radio-row {
     margin-top: 4px;
   }
@@ -692,4 +796,8 @@ body.active {
 
 #draw-canvas.opacity-slider {
   cursor: ns-resize;
+}
+
+#draw-canvas.path-endpoint {
+  cursor: move;
 }

@@ -1,9 +1,13 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { DrawingBoard, type Corner, type Tool } from "./draw";
+import { DrawingBoard, type Corner, type PathEndpoint, type Tool } from "./draw";
 import {
   DEFAULT_PRESET_COLORS,
+  SETTINGS_PANEL_DEFAULT_WIDTH,
+  SETTINGS_PANEL_MIN_HEIGHT,
+  SETTINGS_PANEL_MIN_WIDTH,
+  clampHandleSizeScale,
   formatHotkeyFromEvent,
   formatModifierHotkeyFromEvent,
   loadSettings,
@@ -14,7 +18,8 @@ import {
   type Settings,
 } from "./settings";
 
-type HotkeyTarget = "activate" | "color" | "shape" | "sizeScroll";
+type HotkeyTarget = "activate" | "disable" | "color" | "shape" | "sizeScroll";
+type SettingsResizeEdge = "n" | "e" | "s" | "w" | "ne" | "nw" | "se" | "sw";
 
 const canvas = document.getElementById("draw-canvas") as HTMLCanvasElement;
 const toolbar = document.getElementById("toolbar") as HTMLElement;
@@ -45,6 +50,9 @@ const resetPresetsBtn = document.getElementById(
   "reset-presets-btn",
 ) as HTMLButtonElement;
 const hotkeyBtn = document.getElementById("hotkey-btn") as HTMLButtonElement;
+const disableHotkeyBtn = document.getElementById(
+  "disable-hotkey-btn",
+) as HTMLButtonElement;
 const colorHotkeyBtn = document.getElementById(
   "color-hotkey-btn",
 ) as HTMLButtonElement;
@@ -117,6 +125,15 @@ const returnToFreehandAfterShape = document.getElementById(
 const showArrowTipPivot = document.getElementById(
   "show-arrow-tip-pivot",
 ) as HTMLInputElement;
+const showPathEndpointHandles = document.getElementById(
+  "show-path-endpoint-handles",
+) as HTMLInputElement;
+const handleSizeScale = document.getElementById(
+  "handle-size-scale",
+) as HTMLInputElement;
+const handleSizeValue = document.getElementById(
+  "handle-size-value",
+) as HTMLElement;
 const advancedSettingsToggle = document.getElementById(
   "advanced-settings-toggle",
 ) as HTMLButtonElement;
@@ -154,16 +171,85 @@ function applyToolbarPosition() {
 }
 
 function applySettingsPanelPosition(anchor: HTMLElement = settingsBtn) {
-  if (settings.settingsX == null || settings.settingsY == null) {
+  const advanced = isAdvancedSettingsOpen();
+  const savedX = advanced ? settings.advancedSettingsX : settings.settingsX;
+  const savedY = advanced ? settings.advancedSettingsY : settings.settingsY;
+  if (savedX == null || savedY == null) {
     positionPanel(settingsPanel, anchor);
     return;
   }
   const maxX = window.innerWidth - settingsPanel.offsetWidth - 8;
   const maxY = window.innerHeight - settingsPanel.offsetHeight - 8;
-  const x = Math.min(Math.max(8, settings.settingsX), Math.max(8, maxX));
-  const y = Math.min(Math.max(8, settings.settingsY), Math.max(8, maxY));
+  const x = Math.min(Math.max(8, savedX), Math.max(8, maxX));
+  const y = Math.min(Math.max(8, savedY), Math.max(8, maxY));
   settingsPanel.style.left = `${x}px`;
   settingsPanel.style.top = `${y}px`;
+}
+
+function isAdvancedSettingsOpen(): boolean {
+  return !advancedSettings.classList.contains("hidden");
+}
+
+function clampSettingsPanelWidth(width: number): number {
+  const max = Math.max(
+    SETTINGS_PANEL_MIN_WIDTH,
+    window.innerWidth - 16,
+  );
+  return Math.min(
+    Math.max(SETTINGS_PANEL_MIN_WIDTH, Math.round(width)),
+    max,
+  );
+}
+
+function clampSettingsPanelHeight(height: number): number {
+  const max = Math.max(
+    SETTINGS_PANEL_MIN_HEIGHT,
+    window.innerHeight - 24,
+  );
+  return Math.min(
+    Math.max(SETTINGS_PANEL_MIN_HEIGHT, Math.round(height)),
+    max,
+  );
+}
+
+function applySettingsPanelSize() {
+  const advanced = isAdvancedSettingsOpen();
+  const width = clampSettingsPanelWidth(
+    (advanced ? settings.advancedSettingsWidth : settings.settingsWidth) ??
+      SETTINGS_PANEL_DEFAULT_WIDTH,
+  );
+  const height = advanced
+    ? settings.advancedSettingsHeight
+    : settings.settingsHeight;
+
+  settingsPanel.style.width = `${width}px`;
+  if (height == null) {
+    settingsPanel.style.removeProperty("height");
+  } else {
+    settingsPanel.style.height = `${clampSettingsPanelHeight(height)}px`;
+  }
+}
+
+function saveSettingsPanelSize(width: number, height: number) {
+  const w = clampSettingsPanelWidth(width);
+  const h = clampSettingsPanelHeight(height);
+  if (isAdvancedSettingsOpen()) {
+    settings.advancedSettingsWidth = w;
+    settings.advancedSettingsHeight = h;
+  } else {
+    settings.settingsWidth = w;
+    settings.settingsHeight = h;
+  }
+}
+
+function saveSettingsPanelPosition(x: number, y: number) {
+  if (isAdvancedSettingsOpen()) {
+    settings.advancedSettingsX = Math.round(x);
+    settings.advancedSettingsY = Math.round(y);
+  } else {
+    settings.settingsX = Math.round(x);
+    settings.settingsY = Math.round(y);
+  }
 }
 
 function updateColorUi(color: string) {
@@ -225,6 +311,14 @@ function updateSmoothStrengthUi(value: number) {
   board.setSmoothStrength(clamped);
 }
 
+function updateHandleSizeScaleUi(value: number) {
+  const clamped = clampHandleSizeScale(value);
+  settings.handleSizeScale = clamped;
+  handleSizeScale.value = String(clamped);
+  handleSizeValue.textContent = `${clamped}%`;
+  board.setHandleSizeScale(clamped);
+}
+
 function updateBrushDefaultsUi() {
   defaultSize.value = String(settings.brushSize);
   defaultSizeValue.textContent = String(settings.brushSize);
@@ -268,6 +362,8 @@ function updateHandleOptionsUi() {
   applyThicknessToBrush.checked = settings.applyThicknessToBrush;
   returnToFreehandAfterShape.checked = settings.returnToFreehandAfterShape;
   showArrowTipPivot.checked = settings.showArrowTipPivot;
+  showPathEndpointHandles.checked = settings.showPathEndpointHandles;
+  updateHandleSizeScaleUi(settings.handleSizeScale);
   board.setShowLineThicknessHandle(settings.showLineThicknessHandle);
   board.setShowLineOpacityHandle(settings.showLineOpacityHandle);
   board.setShowShapeThicknessHandle(settings.showShapeThicknessHandle);
@@ -275,6 +371,7 @@ function updateHandleOptionsUi() {
   board.setApplyThicknessToBrush(settings.applyThicknessToBrush);
   board.setReturnToFreehandAfterShape(settings.returnToFreehandAfterShape);
   board.setShowArrowTipPivot(settings.showArrowTipPivot);
+  board.setShowPathEndpointHandles(settings.showPathEndpointHandles);
 }
 
 function setAdvancedSettingsOpen(open: boolean) {
@@ -295,6 +392,7 @@ function setAdvancedSettingsOpen(open: boolean) {
     buildEditColorPresets();
   }
   if (!settingsPanel.classList.contains("hidden")) {
+    applySettingsPanelSize();
     applySettingsPanelPosition(settingsBtn);
   }
 }
@@ -344,6 +442,7 @@ function markSelectedPresets() {
 
 function hotkeyButton(target: HotkeyTarget): HTMLButtonElement {
   if (target === "activate") return hotkeyBtn;
+  if (target === "disable") return disableHotkeyBtn;
   if (target === "color") return colorHotkeyBtn;
   if (target === "shape") return shapeHotkeyBtn;
   return sizeHotkeyBtn;
@@ -351,6 +450,7 @@ function hotkeyButton(target: HotkeyTarget): HTMLButtonElement {
 
 function hotkeyLabel(target: HotkeyTarget): string {
   if (target === "activate") return settings.activateHotkey;
+  if (target === "disable") return settings.disableHotkey;
   if (target === "color") return settings.colorHotkey;
   if (target === "shape") return settings.shapeHotkey;
   return settings.sizeScrollHotkey;
@@ -451,6 +551,7 @@ function updateCanvasCursorClass(hoverHandle: Corner | null = null) {
     "fill-btn",
     "opacity-slider",
     "tip-pivot",
+    "path-endpoint",
   );
   if (hoverHandle) {
     canvas.classList.add(`resize-${hoverHandle}`);
@@ -472,6 +573,7 @@ function updateHoverCursor(point: { x: number; y: number }) {
       "thickness-grip",
       "fill-btn",
       "tip-pivot",
+      "path-endpoint",
     );
     canvas.classList.add("opacity-slider");
     return;
@@ -486,6 +588,7 @@ function updateHoverCursor(point: { x: number; y: number }) {
       "thickness-grip",
       "fill-btn",
       "opacity-slider",
+      "path-endpoint",
     );
     canvas.classList.add("tip-pivot");
     return;
@@ -500,6 +603,7 @@ function updateHoverCursor(point: { x: number; y: number }) {
       "thickness-grip",
       "opacity-slider",
       "tip-pivot",
+      "path-endpoint",
     );
     canvas.classList.add("fill-btn");
     return;
@@ -514,12 +618,33 @@ function updateHoverCursor(point: { x: number; y: number }) {
       "fill-btn",
       "opacity-slider",
       "tip-pivot",
+      "path-endpoint",
     );
     canvas.classList.add("thickness-grip");
     return;
   }
   const handle = board.hitTestHandle(point);
-  updateCanvasCursorClass(handle);
+  if (handle) {
+    updateCanvasCursorClass(handle);
+    return;
+  }
+  const endpoint: PathEndpoint | null = board.hitTestPathEndpoint(point);
+  if (endpoint) {
+    canvas.classList.remove(
+      "shape-tool",
+      "resize-nw",
+      "resize-ne",
+      "resize-sw",
+      "resize-se",
+      "thickness-grip",
+      "fill-btn",
+      "opacity-slider",
+      "tip-pivot",
+    );
+    canvas.classList.add("path-endpoint");
+    return;
+  }
+  updateCanvasCursorClass(null);
 }
 
 function isUiTarget(target: EventTarget | null): boolean {
@@ -675,15 +800,44 @@ function isInteractiveUiTarget(target: EventTarget | null): boolean {
   if (!(target instanceof Element)) return false;
   return Boolean(
     target.closest(
-      "button, input, select, textarea, a, label, [role='button'], [contenteditable='true']",
+      "button, input, select, textarea, a, label, [role='button'], [contenteditable='true'], .settings-resize-handle",
     ),
   );
+}
+
+/** Top strip (to first field) and bottom strip (from advanced/hide button). */
+function isSettingsDragZone(clientY: number): boolean {
+  const advancedOpen = !advancedSettings.classList.contains("hidden");
+  const contentRoot = advancedOpen ? advancedSettings : settingsBasic;
+  const firstField = contentRoot.querySelector(".field");
+  const bottomAnchor = advancedOpen
+    ? hideAdvancedSettings
+    : advancedSettingsToggle;
+  const header = settingsPanel.querySelector(".panel-header");
+  const actions = settingsPanel.querySelector(".settings-actions");
+  if (!header || !actions) return false;
+
+  const headerBottom = header.getBoundingClientRect().bottom;
+  const topZoneEnd = firstField
+    ? Math.max(headerBottom, firstField.getBoundingClientRect().top)
+    : headerBottom;
+  if (clientY < topZoneEnd) return true;
+
+  const panelTop = settingsPanel.getBoundingClientRect().top;
+  const actionsTop = actions.getBoundingClientRect().top;
+  const anchorBottom = bottomAnchor.getBoundingClientRect().bottom;
+  const bottomZoneStart =
+    anchorBottom >= panelTop && anchorBottom <= actionsTop
+      ? anchorBottom
+      : actionsTop;
+  return clientY >= bottomZoneStart;
 }
 
 function setupElementDrag(
   handle: HTMLElement,
   target: HTMLElement,
   onEnd?: (rect: DOMRect) => void | Promise<void>,
+  canStart?: (e: PointerEvent) => boolean,
 ) {
   let dragging = false;
   let offsetX = 0;
@@ -692,7 +846,9 @@ function setupElementDrag(
   handle.addEventListener("pointerdown", (e) => {
     if (e.button !== 0) return;
     if (isInteractiveUiTarget(e.target)) return;
+    if (canStart && !canStart(e)) return;
     dragging = true;
+    target.classList.add("dragging");
     handle.setPointerCapture(e.pointerId);
     const rect = target.getBoundingClientRect();
     offsetX = e.clientX - rect.left;
@@ -719,6 +875,7 @@ function setupElementDrag(
   const endDrag = async (e: PointerEvent) => {
     if (!dragging) return;
     dragging = false;
+    target.classList.remove("dragging");
     try {
       handle.releasePointerCapture(e.pointerId);
     } catch {
@@ -740,11 +897,129 @@ function setupToolbarDrag() {
 }
 
 function setupSettingsDrag() {
-  setupElementDrag(settingsPanel, settingsPanel, async (rect) => {
-    settings.settingsX = rect.left;
-    settings.settingsY = rect.top;
-    await persist();
+  setupElementDrag(
+    settingsPanel,
+    settingsPanel,
+    async (rect) => {
+      saveSettingsPanelPosition(rect.left, rect.top);
+      await persist();
+    },
+    (e) => isSettingsDragZone(e.clientY),
+  );
+
+  settingsPanel.addEventListener("pointermove", (e) => {
+    if (settingsPanel.classList.contains("dragging")) return;
+    if (settingsPanel.classList.contains("resizing")) return;
+    if (isInteractiveUiTarget(e.target)) {
+      settingsPanel.style.removeProperty("cursor");
+      return;
+    }
+    settingsPanel.style.cursor = isSettingsDragZone(e.clientY)
+      ? "grab"
+      : "default";
   });
+}
+
+function setupSettingsResize() {
+  const handles = settingsPanel.querySelectorAll<HTMLElement>(
+    ".settings-resize-handle",
+  );
+
+  for (const handle of handles) {
+    const edge = handle.dataset.resize as SettingsResizeEdge | undefined;
+    if (!edge) continue;
+
+    let resizing = false;
+    let startX = 0;
+    let startY = 0;
+    let startLeft = 0;
+    let startTop = 0;
+    let startWidth = 0;
+    let startHeight = 0;
+
+    handle.addEventListener("pointerdown", (e) => {
+      if (e.button !== 0) return;
+      resizing = true;
+      settingsPanel.classList.add("resizing");
+      handle.setPointerCapture(e.pointerId);
+      const rect = settingsPanel.getBoundingClientRect();
+      startX = e.clientX;
+      startY = e.clientY;
+      startLeft = rect.left;
+      startTop = rect.top;
+      startWidth = rect.width;
+      startHeight = rect.height;
+      e.preventDefault();
+      e.stopPropagation();
+    });
+
+    handle.addEventListener("pointermove", (e) => {
+      if (!resizing) return;
+      const dx = e.clientX - startX;
+      const dy = e.clientY - startY;
+      let left = startLeft;
+      let top = startTop;
+      let width = startWidth;
+      let height = startHeight;
+
+      if (edge.includes("e")) {
+        width = startWidth + dx;
+      }
+      if (edge.includes("w")) {
+        width = startWidth - dx;
+        left = startLeft + dx;
+      }
+      if (edge.includes("s")) {
+        height = startHeight + dy;
+      }
+      if (edge.includes("n")) {
+        height = startHeight - dy;
+        top = startTop + dy;
+      }
+
+      width = clampSettingsPanelWidth(width);
+      height = clampSettingsPanelHeight(height);
+
+      if (edge.includes("w")) {
+        left = startLeft + (startWidth - width);
+      }
+      if (edge.includes("n")) {
+        top = startTop + (startHeight - height);
+      }
+
+      const maxLeft = window.innerWidth - width;
+      const maxTop = window.innerHeight - height;
+      left = Math.min(Math.max(0, left), Math.max(0, maxLeft));
+      top = Math.min(Math.max(0, top), Math.max(0, maxTop));
+
+      settingsPanel.style.width = `${width}px`;
+      settingsPanel.style.height = `${height}px`;
+      settingsPanel.style.left = `${left}px`;
+      settingsPanel.style.top = `${top}px`;
+
+      if (defaultColorPicker.classList.contains("open")) {
+        positionDefaultColorFlyout();
+      }
+    });
+
+    const endResize = async (e: PointerEvent) => {
+      if (!resizing) return;
+      resizing = false;
+      settingsPanel.classList.remove("resizing");
+      try {
+        handle.releasePointerCapture(e.pointerId);
+      } catch {
+        /* already released */
+      }
+      const rect = settingsPanel.getBoundingClientRect();
+      saveSettingsPanelSize(rect.width, rect.height);
+      saveSettingsPanelPosition(rect.left, rect.top);
+      await persist();
+    };
+
+    handle.addEventListener("pointerup", endResize);
+    handle.addEventListener("pointercancel", endResize);
+  }
 }
 
 function setupDrawing() {
@@ -814,6 +1089,25 @@ async function finishHotkeyRecording(combo: string) {
       btn.textContent = `Invalid: ${String(err)}`;
       setTimeout(() => {
         btn.textContent = settings.activateHotkey;
+        btn.classList.remove("recording");
+        recordingHotkey = null;
+      }, 1200);
+    }
+    return;
+  }
+
+  if (target === "disable") {
+    try {
+      await invoke("set_disable_hotkey", { hotkey: combo });
+      settings.disableHotkey = combo;
+      btn.textContent = combo;
+      btn.classList.remove("recording");
+      recordingHotkey = null;
+      await persist();
+    } catch (err) {
+      btn.textContent = `Invalid: ${String(err)}`;
+      setTimeout(() => {
+        btn.textContent = settings.disableHotkey;
         btn.classList.remove("recording");
         recordingHotkey = null;
       }, 1200);
@@ -941,6 +1235,7 @@ async function boot() {
   updateBrushPersistenceUi(settings.brushPersistence);
   updateHandleOptionsUi();
   hotkeyBtn.textContent = settings.activateHotkey;
+  disableHotkeyBtn.textContent = settings.disableHotkey;
   colorHotkeyBtn.textContent = settings.colorHotkey;
   shapeHotkeyBtn.textContent = settings.shapeHotkey;
   updatePanelHotkeyEnableUi();
@@ -949,13 +1244,19 @@ async function boot() {
   applyToolbarPosition();
   setupToolbarDrag();
   setupSettingsDrag();
+  setupSettingsResize();
   setupDrawing();
   setupHotkeys();
 
   try {
     await invoke("set_activate_hotkey", { hotkey: settings.activateHotkey });
   } catch (err) {
-    console.warn("Could not register saved hotkey, using default", err);
+    console.warn("Could not register activate hotkey, using default", err);
+  }
+  try {
+    await invoke("set_disable_hotkey", { hotkey: settings.disableHotkey });
+  } catch (err) {
+    console.warn("Could not register disable hotkey, using default", err);
   }
 
   colorBtn.addEventListener("click", () => {
@@ -1009,7 +1310,6 @@ async function boot() {
       setAdvancedSettingsOpen(false);
       updateBrushPersistenceUi(settings.brushPersistence);
       updateHandleOptionsUi();
-      applySettingsPanelPosition(settingsBtn);
     } else {
       setDefaultColorFlyoutOpen(false);
       stopHotkeyRecording();
@@ -1030,6 +1330,10 @@ async function boot() {
 
   hotkeyBtn.addEventListener("click", () => {
     startHotkeyRecording("activate");
+  });
+
+  disableHotkeyBtn.addEventListener("click", () => {
+    startHotkeyRecording("disable");
   });
 
   colorHotkeyBtn.addEventListener("click", () => {
@@ -1125,6 +1429,17 @@ async function boot() {
     await saveSettings(settings);
   });
 
+  showPathEndpointHandles.addEventListener("change", async () => {
+    settings.showPathEndpointHandles = showPathEndpointHandles.checked;
+    board.setShowPathEndpointHandles(settings.showPathEndpointHandles);
+    await saveSettings(settings);
+  });
+
+  handleSizeScale.addEventListener("input", async () => {
+    updateHandleSizeScaleUi(Number(handleSizeScale.value));
+    await saveSettings(settings);
+  });
+
   defaultColorBtn.addEventListener("click", (e) => {
     e.stopPropagation();
     const open = !defaultColorPicker.classList.contains("open");
@@ -1152,6 +1467,7 @@ async function boot() {
     board.resize();
     applyToolbarPosition();
     if (!settingsPanel.classList.contains("hidden")) {
+      applySettingsPanelSize();
       applySettingsPanelPosition(settingsBtn);
     }
     if (defaultColorPicker.classList.contains("open")) {
