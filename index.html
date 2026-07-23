@@ -10,13 +10,7 @@
     <canvas id="draw-canvas"></canvas>
 
     <aside id="toolbar" aria-label="Screen Pen toolbar">
-      <button
-        id="drag-handle"
-        class="drag-handle"
-        title="Drag to move"
-        type="button"
-        aria-label="Move toolbar"
-      ></button>
+      <div id="drag-spacer" class="drag-spacer" aria-hidden="true"></div>
 
       <div class="tool-stack">
         <button id="draw-btn" class="tool-btn active" title="Draw" type="button">
@@ -62,9 +56,14 @@
           </svg>
         </button>
       </div>
-
-      <div id="size-preview" class="size-preview" title="Brush size (Shift + scroll)"></div>
     </aside>
+
+    <div
+      id="size-preview"
+      class="size-preview"
+      title="Brush size (Shift + scroll)"
+      aria-hidden="true"
+    ></div>
 
     <div id="color-panel" class="panel hidden" role="dialog" aria-label="Color picker">
       <div class="preset-row" id="color-presets"></div>
@@ -72,9 +71,6 @@
         <span>Custom</span>
         <input id="color-input" type="color" value="#ff2d2d" />
       </label>
-      <button id="add-preset-btn" type="button" class="add-preset-btn" disabled>
-        Add this color to defaults
-      </button>
     </div>
 
     <div id="shape-panel" class="panel shape-panel hidden" role="dialog" aria-label="Shape picker">
@@ -118,81 +114,225 @@
             />
           </svg>
         </button>
+        <button
+          type="button"
+          class="shape-option"
+          data-shape="arrow"
+          title="Arrow"
+          aria-label="Arrow"
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path
+              d="M4 12h12.5M12.5 6.5 19 12l-6.5 5.5"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            />
+          </svg>
+        </button>
       </div>
     </div>
 
     <div id="settings-panel" class="panel hidden" role="dialog" aria-label="Settings">
-      <h2>Settings</h2>
-      <label class="field">
-        <span>Activate hotkey</span>
-        <button id="hotkey-btn" type="button" class="hotkey-btn">Ctrl+Alt+D</button>
-      </label>
-      <label class="field">
-        <span>Color panel hotkey</span>
-        <button id="color-hotkey-btn" type="button" class="hotkey-btn">C</button>
-      </label>
-      <label class="field">
-        <span>Shape panel hotkey</span>
-        <button id="shape-hotkey-btn" type="button" class="hotkey-btn">S</button>
-      </label>
-      <label class="field">
-        <span>Size change hotkey</span>
-        <button id="size-hotkey-btn" type="button" class="hotkey-btn">Shift</button>
-      </label>
-      <label class="field">
-        <span>Size scroll sensitivity <strong id="sensitivity-value">4</strong></span>
-        <input
-          id="size-sensitivity"
-          type="range"
-          min="1"
-          max="10"
-          step="1"
-          value="4"
-        />
-      </label>
-      <fieldset class="field brush-persist-field">
-        <legend>Brush color &amp; size</legend>
-        <label class="radio-row">
-          <input
-            type="radio"
-            name="brush-persistence"
-            id="brush-persist-default"
-            value="default"
-          />
-          <span>Use defaults each time</span>
+      <div class="panel-header">
+        <h2 id="settings-title">Settings</h2>
+      </div>
+      <div class="settings-scroll">
+      <div id="settings-basic">
+        <label class="field">
+          <span>Activate hotkey</span>
+          <button id="hotkey-btn" type="button" class="hotkey-btn">Ctrl+Alt+D</button>
         </label>
-        <label class="radio-row">
-          <input
-            type="radio"
-            name="brush-persistence"
-            id="brush-persist-remember"
-            value="rememberLast"
-            checked
-          />
-          <span>Remember last used</span>
-        </label>
-      </fieldset>
-      <div id="brush-defaults" class="brush-defaults hidden">
         <div class="field">
-          <span>Default color</span>
-          <div class="preset-row" id="default-color-presets"></div>
+          <div class="field-label-row">
+            <span>Color panel hotkey</span>
+            <label class="hotkey-enable" title="Enable color panel hotkey">
+              <input type="checkbox" id="color-hotkey-enabled" checked />
+            </label>
+          </div>
+          <button id="color-hotkey-btn" type="button" class="hotkey-btn">C</button>
+        </div>
+        <div class="field">
+          <div class="field-label-row">
+            <span>Shape panel hotkey</span>
+            <label class="hotkey-enable" title="Enable shape panel hotkey">
+              <input type="checkbox" id="shape-hotkey-enabled" checked />
+            </label>
+          </div>
+          <button id="shape-hotkey-btn" type="button" class="hotkey-btn">S</button>
         </div>
         <label class="field">
-          <span>Default size <strong id="default-size-value">4</strong></span>
+          <span>Size change modifier for scroll</span>
+          <button id="size-hotkey-btn" type="button" class="hotkey-btn">Shift</button>
+        </label>
+        <label class="field">
+          <span>Size scroll sensitivity <strong id="sensitivity-value">4</strong></span>
           <input
-            id="default-size"
+            id="size-sensitivity"
             type="range"
             min="1"
-            max="80"
+            max="10"
             step="1"
             value="4"
           />
         </label>
+        <button
+          id="advanced-settings-toggle"
+          type="button"
+          class="advanced-toggle"
+          aria-expanded="false"
+          aria-controls="advanced-settings"
+        >
+          Advanced settings
+        </button>
       </div>
-      <p class="hint" id="settings-hint">
-        Shift + scroll changes brush size. Click a hotkey button, then press a new
-        shortcut. Esc cancels. Size change accepts modifier keys only.
-      </p>
+      <div id="advanced-settings" class="advanced-settings hidden">
+        <fieldset class="field brush-persist-field">
+          <legend>Line settings</legend>
+          <label class="radio-row">
+            <input
+              type="checkbox"
+              id="show-line-thickness-handle"
+              checked
+            />
+            <span>Thickness handle</span>
+          </label>
+          <label class="radio-row">
+            <input
+              type="checkbox"
+              id="show-line-opacity-handle"
+              checked
+            />
+            <span>Opacity handle</span>
+          </label>
+          <label class="radio-row">
+            <input
+              type="checkbox"
+              id="apply-thickness-to-brush"
+              checked
+            />
+            <span>Apply handle thickness to brush size</span>
+          </label>
+        </fieldset>
+        <fieldset class="field brush-persist-field">
+          <legend>Shape settings</legend>
+          <label class="radio-row">
+            <input
+              type="checkbox"
+              id="show-shape-thickness-handle"
+              checked
+            />
+            <span>Thickness handle</span>
+          </label>
+          <label class="radio-row">
+            <input
+              type="checkbox"
+              id="show-shape-opacity-handle"
+              checked
+            />
+            <span>Opacity handle</span>
+          </label>
+          <label class="radio-row">
+            <input
+              type="checkbox"
+              id="return-to-freehand-after-shape"
+              checked
+            />
+            <span>Return to free-draw when shape is finished</span>
+          </label>
+          <label class="radio-row">
+            <input
+              type="checkbox"
+              id="show-arrow-tip-pivot"
+              checked
+            />
+            <span>Add pivot handle for arrows</span>
+          </label>
+        </fieldset>
+        <fieldset class="field brush-persist-field">
+          <legend>Brush color &amp; size</legend>
+          <label class="radio-row">
+            <input
+              type="radio"
+              name="brush-persistence"
+              id="brush-persist-default"
+              value="default"
+            />
+            <span>Use defaults each time</span>
+          </label>
+          <label class="radio-row">
+            <input
+              type="radio"
+              name="brush-persistence"
+              id="brush-persist-remember"
+              value="rememberLast"
+              checked
+            />
+            <span>Remember last used</span>
+          </label>
+        </fieldset>
+        <div id="brush-defaults" class="brush-defaults hidden">
+          <div class="field">
+            <span>Default color</span>
+            <div class="default-color-picker" id="default-color-picker">
+              <div
+                class="default-color-flyout"
+                id="default-color-presets"
+                role="listbox"
+                aria-label="Default colors"
+              ></div>
+              <button
+                id="default-color-btn"
+                type="button"
+                class="default-color-btn"
+                title="Default color"
+                aria-label="Default color"
+                aria-expanded="false"
+                aria-controls="default-color-presets"
+              >
+                <span id="default-color-swatch" class="color-swatch"></span>
+              </button>
+            </div>
+          </div>
+          <label class="field">
+            <span>Default size <strong id="default-size-value">4</strong></span>
+            <input
+              id="default-size"
+              type="range"
+              min="1"
+              max="80"
+              step="1"
+              value="4"
+            />
+          </label>
+        </div>
+        <div class="field color-editing">
+          <span>Color editing</span>
+          <div class="preset-row" id="edit-color-presets"></div>
+          <label class="field">
+            <span>Custom</span>
+            <input id="edit-color-input" type="color" value="#ff2d2d" />
+          </label>
+          <button id="add-preset-btn" type="button" class="add-preset-btn" disabled>
+            Add this color to defaults
+          </button>
+          <button id="reset-presets-btn" type="button" class="add-preset-btn reset-presets-btn">
+            Reset colors to defaults
+          </button>
+        </div>
+        <button
+          id="hide-advanced-settings"
+          type="button"
+          class="advanced-toggle"
+          aria-expanded="true"
+          aria-controls="advanced-settings"
+        >
+          Hide advanced settings
+        </button>
+      </div>
+      </div>
       <div class="settings-actions">
         <button id="settings-close" type="button">Done</button>
       </div>

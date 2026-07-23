@@ -53,7 +53,11 @@ body.active {
   border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: 14px;
   box-shadow: 0 10px 28px rgba(0, 0, 0, 0.35);
-  cursor: default;
+  cursor: grab;
+}
+
+#toolbar:active {
+  cursor: grabbing;
 }
 
 .tool-stack {
@@ -90,28 +94,12 @@ body.active {
   height: 20px;
 }
 
-.drag-handle {
+.drag-spacer {
   width: 18px;
   height: 18px;
-  margin: 2px 0 2px;
-  border: none;
-  border-radius: 50%;
-  padding: 0;
-  cursor: grab;
-  background: linear-gradient(180deg, #9ca3af, #6b7280);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.35),
-    0 1px 2px rgba(0, 0, 0, 0.35);
+  margin: 2px 0;
   flex-shrink: 0;
-}
-
-.drag-handle:hover {
-  background: linear-gradient(180deg, #d1d5db, #9ca3af);
-}
-
-.drag-handle:active {
-  cursor: grabbing;
-  background: linear-gradient(180deg, #e5e7eb, #9ca3af);
+  pointer-events: none;
 }
 
 .color-swatch {
@@ -124,14 +112,26 @@ body.active {
 }
 
 .size-preview {
-  margin-top: 4px;
+  position: fixed;
+  z-index: 15;
+  left: 0;
+  top: 0;
   width: 4px;
   height: 4px;
   border-radius: 50%;
   background: #ff2d2d;
-  border: 1px solid rgba(255, 255, 255, 0.7);
-  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.25);
+  border: 1.5px solid rgba(255, 255, 255, 0.9);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.35);
+  transform: translate(-50%, -50%);
   pointer-events: none;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.1s ease;
+}
+
+.size-preview.visible {
+  opacity: 0.8;
+  visibility: visible;
 }
 
 .panel {
@@ -146,8 +146,68 @@ body.active {
   box-shadow: 0 12px 30px rgba(0, 0, 0, 0.4);
 }
 
+#settings-panel {
+  cursor: grab;
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100vh - 24px);
+  overflow: hidden;
+  padding-bottom: 12px;
+}
+
+/* ID rule above beats `.panel.hidden`; keep hide working. */
+#settings-panel.hidden {
+  display: none;
+}
+
+#settings-panel:active {
+  cursor: grabbing;
+}
+
+#settings-panel button,
+#settings-panel button:active {
+  cursor: pointer;
+}
+
+#settings-panel input,
+#settings-panel label,
+#settings-panel input:active,
+#settings-panel label:active {
+  cursor: auto;
+}
+
+.settings-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-right: 2px;
+  margin-right: -2px;
+}
+
+.settings-scroll::-webkit-scrollbar {
+  width: 6px;
+}
+
+.settings-scroll::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 999px;
+}
+
 .panel.hidden {
   display: none;
+}
+
+.panel-header {
+  display: flex;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.panel-header h2 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 650;
 }
 
 .panel h2 {
@@ -168,6 +228,25 @@ body.active {
 .field strong {
   color: #f5f5f5;
   font-weight: 650;
+}
+
+.field-label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.hotkey-enable {
+  display: inline-flex;
+  align-items: center;
+  cursor: pointer;
+}
+
+.hotkey-enable input {
+  accent-color: #2f6fed;
+  cursor: pointer;
+  margin: 0;
 }
 
 .field input[type="range"] {
@@ -206,6 +285,96 @@ body.active {
 
 .brush-defaults.hidden {
   display: none;
+}
+
+.default-color-picker {
+  display: flex;
+  justify-content: flex-start;
+  align-items: center;
+  min-height: 32px;
+}
+
+.default-color-btn {
+  width: 32px;
+  height: 32px;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.default-color-btn:hover .color-swatch {
+  transform: scale(1.08);
+}
+
+.default-color-btn .color-swatch {
+  width: 26px;
+  height: 26px;
+  transition: transform 0.12s ease;
+}
+
+.default-color-flyout {
+  position: fixed;
+  z-index: 40;
+  display: flex;
+  flex-direction: row-reverse;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 999px;
+  background: rgba(24, 26, 30, 0.96);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.4);
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transform: translateY(-50%) translateX(10px);
+  transition:
+    opacity 0.16s ease,
+    transform 0.16s ease,
+    visibility 0.16s ease;
+}
+
+.default-color-picker.open .default-color-flyout {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transform: translateY(-50%) translateX(0);
+}
+
+.default-color-flyout .preset {
+  width: 24px;
+  height: 24px;
+  flex-shrink: 0;
+}
+
+#settings-basic.hidden {
+  display: none;
+}
+
+.color-editing > .field {
+  margin-bottom: 8px;
+}
+
+.color-editing .preset-row {
+  margin-top: 6px;
+}
+
+.color-editing .add-preset-btn {
+  margin-top: 0;
+}
+
+#edit-color-input {
+  width: 100%;
+  height: 34px;
+  border: none;
+  background: transparent;
+  padding: 0;
+  cursor: pointer;
 }
 
 .preset-row {
@@ -292,6 +461,18 @@ body.active {
   cursor: default;
 }
 
+.reset-presets-btn {
+  margin-top: 8px;
+  background: transparent;
+  border-style: dashed;
+  color: #c4c7ce;
+}
+
+.reset-presets-btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+}
+
 .hotkey-btn {
   border: 1px solid rgba(255, 255, 255, 0.18);
   background: rgba(255, 255, 255, 0.06);
@@ -308,17 +489,45 @@ body.active {
   background: rgba(59, 130, 246, 0.2);
 }
 
-.hint {
-  margin: 10px 0 0;
-  font-size: 11px;
+.hotkey-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
   color: #9aa0aa;
-  line-height: 1.4;
+}
+
+.advanced-toggle {
+  width: 100%;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: rgba(255, 255, 255, 0.06);
+  color: #e5e7eb;
+  border-radius: 8px;
+  padding: 8px 10px;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  margin-bottom: 4px;
+}
+
+.advanced-toggle:hover {
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+}
+
+#hide-advanced-settings {
+  margin-top: 8px;
+  margin-bottom: 0;
+}
+
+.advanced-settings.hidden {
+  display: none;
 }
 
 .settings-actions {
-  margin-top: 14px;
+  margin-top: 12px;
   display: flex;
   justify-content: flex-end;
+  flex-shrink: 0;
 }
 
 .settings-actions button {
@@ -329,6 +538,78 @@ body.active {
   padding: 8px 14px;
   cursor: pointer;
   font: inherit;
+}
+
+@media (max-height: 820px) {
+  .panel {
+    padding: 10px 12px;
+  }
+
+  .panel-header {
+    margin-bottom: 8px;
+  }
+
+  .field {
+    gap: 4px;
+    margin-bottom: 8px;
+  }
+
+  .brush-persist-field {
+    margin-bottom: 8px;
+  }
+
+  .brush-persist-field legend {
+    margin-bottom: 4px;
+  }
+
+  .radio-row {
+    margin-top: 4px;
+  }
+
+  .hotkey-btn,
+  .advanced-toggle,
+  .add-preset-btn {
+    padding: 6px 8px;
+  }
+
+  .preset-row {
+    gap: 8px 6px;
+    margin-bottom: 8px;
+  }
+
+  .settings-actions {
+    margin-top: 8px;
+  }
+
+  .settings-actions button {
+    padding: 6px 12px;
+  }
+}
+
+@media (max-height: 640px) {
+  .field {
+    margin-bottom: 6px;
+    font-size: 11px;
+  }
+
+  .brush-persist-field legend,
+  .radio-row {
+    font-size: 11px;
+  }
+
+  .hotkey-btn,
+  .advanced-toggle,
+  .add-preset-btn,
+  .settings-actions button {
+    font-size: 11px;
+    padding: 5px 8px;
+  }
+
+  .preset,
+  .preset-wrap {
+    width: 24px;
+    height: 24px;
+  }
 }
 
 #color-input {
@@ -399,6 +680,14 @@ body.active {
 
 #draw-canvas.fill-btn {
   cursor: pointer;
+}
+
+#draw-canvas.tip-pivot,
+#draw-canvas.tip-pivot:active {
+  /* Arc-with-arrow rotate cursor (hotspot at center) */
+  cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24'%3E%3Cpath fill='none' stroke='%23ffffff' stroke-width='3.2' stroke-linecap='round' d='M8.2 6.8a7 7 0 1 1-1.4 9.2'/%3E%3Cpath fill='none' stroke='%23111111' stroke-width='1.8' stroke-linecap='round' d='M8.2 6.8a7 7 0 1 1-1.4 9.2'/%3E%3Cpath fill='%23ffffff' stroke='%23111111' stroke-width='0.9' stroke-linejoin='round' d='M8.2 3.6L5.2 7.4l4.8-.1z'/%3E%3C/svg%3E")
+      12 12,
+    crosshair;
 }
 
 #draw-canvas.opacity-slider {

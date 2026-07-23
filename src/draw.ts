@@ -1,11 +1,21 @@
 export type Point = { x: number; y: number };
 
-export type FreehandStroke = {
-  kind: "freehand";
+export type PathStroke = {
+  kind: "freehand" | "arrow";
   points: Point[];
   color: string;
   size: number;
+  /** Stroke opacity, 0–1. Defaults to 1. */
+  opacity?: number;
+  /**
+   * Arrowhead direction in radians (atan2). When unset, derived from the
+   * path tangent near the tip. Set via the tip pivot handle.
+   */
+  tipAngle?: number;
 };
+
+/** @deprecated Prefer PathStroke — includes freehand and arrow */
+export type FreehandStroke = PathStroke;
 
 export type ShapeKind = "rect" | "ellipse";
 
@@ -25,12 +35,20 @@ export type ShapeStroke = {
   fillOpacity?: number;
 };
 
-export type Drawable = FreehandStroke | ShapeStroke;
+export type Drawable = PathStroke | ShapeStroke;
 
 /** @deprecated Use Drawable; kept as alias for freehand-style strokes in call sites */
-export type Stroke = FreehandStroke;
+export type Stroke = PathStroke;
 
-export type Tool = "freehand" | ShapeKind;
+export type Tool = "freehand" | "arrow" | ShapeKind;
+
+function isPathStroke(item: Drawable): item is PathStroke {
+  return item.kind === "freehand" || item.kind === "arrow";
+}
+
+function isShapeStroke(item: Drawable): item is ShapeStroke {
+  return item.kind === "rect" || item.kind === "ellipse";
+}
 
 export type Corner = "nw" | "ne" | "sw" | "se";
 
@@ -39,11 +57,15 @@ const HANDLE_SIZE = 10;
 const HANDLE_HIT = 14;
 const THICKNESS_GRIP_SIZE = 18;
 const THICKNESS_GRIP_HIT = 16;
+/** Extra gap past the pivot handle edge when size/opacity controls stack. */
+const PIVOT_HANDLE_CLEARANCE = 8;
+const OPACITY_KNOB_RADIUS = 6;
 const FILL_BTN_SIZE = 18;
 const FILL_BTN_HIT = 16;
 const OPACITY_SLIDER_HEIGHT = 72;
 const OPACITY_SLIDER_HIT_W = 14;
 const DEFAULT_FILL_OPACITY = 0.4;
+const DEFAULT_STROKE_OPACITY = 1;
 const MIN_SHAPE_SIZE = 1;
 const MAX_SHAPE_SIZE = 80;
 
@@ -182,9 +204,183 @@ function oppositeCorner(corner: Corner): Corner {
   return "nw";
 }
 
+/** Total polyline length (for shrinking tips on very short strokes). */
+function pathLength(points: Point[]): number {
+  let len = 0;
+  for (let i = 1; i < points.length; i++) {
+    len += Math.hypot(
+      points[i].x - points[i - 1].x,
+      points[i].y - points[i - 1].y,
+    );
+  }
+  return len;
+}
+
+/**
+ * Point reached by walking `distance` back from the tip along the path.
+ * Gives a stable tangent for freehand curves (not just the last sample).
+ */
+function pointAlongPathFromEnd(points: Point[], distance: number): Point {
+  const tip = points[points.length - 1];
+  if (distance <= 0) return { ...tip };
+  let remaining = distance;
+  for (let i = points.length - 1; i > 0; i--) {
+    const a = points[i];
+    const b = points[i - 1];
+    const seg = Math.hypot(a.x - b.x, a.y - b.y);
+    if (seg < 0.001) continue;
+    if (remaining <= seg) {
+      const t = remaining / seg;
+      return {
+        x: a.x + (b.x - a.x) * t,
+        y: a.y + (b.y - a.y) * t,
+      };
+    }
+    remaining -= seg;
+  }
+  return { ...points[0] };
+}
+
+/**
+ * Shaft polyline that always ends at `shaftEnd` (arrow tip base).
+ *
+ * When `lockedBase` is set (tip has been pivoted), the body is already trimmed
+ * to the base — just pin the end. Angle-based tip-slab clipping would otherwise
+ * re-include old tip-region samples once the tip orbits past ~90°.
+ *
+ * Otherwise clips samples inside the tip slab (0 < proj < tipLen) so freehand
+ * ink doesn't poke into the head, while keeping points past the tip.
+ */
+function pathEndingAtArrowBase(
+  points: Point[],
+  shaftEnd: Point,
+  angle: number,
+  tipLen: number,
+  lockedBase = false,
+): Point[] {
+  if (points.length === 0) return [{ ...shaftEnd }];
+
+  // Last sample is the tip vertex — shaft is everything before it.
+  const body = points.length >= 2 ? points.slice(0, -1) : points.slice();
+  if (body.length === 0) return [{ ...shaftEnd }];
+
+  if (lockedBase) {
+    const last = body[body.length - 1];
+    if (Math.hypot(last.x - shaftEnd.x, last.y - shaftEnd.y) < 0.5) {
+      return [...body.slice(0, -1), { ...shaftEnd }];
+    }
+    return [...body, { ...shaftEnd }];
+  }
+
+  const ux = Math.cos(angle);
+  const uy = Math.sin(angle);
+  const proj = (p: Point) =>
+    (p.x - shaftEnd.x) * ux + (p.y - shaftEnd.y) * uy;
+
+  // Drop trailing body points inside the tip (0 < proj < tipLen) only.
+  let end = body.length;
+  while (end > 0) {
+    const p = proj(body[end - 1]);
+    if (p > 0 && p < tipLen) end--;
+    else break;
+  }
+
+  if (end === 0) {
+    // Entire body fell inside the tip slab — still join first sample to base.
+    return [{ ...body[0] }, { ...shaftEnd }];
+  }
+
+  const clipped = body.slice(0, end);
+  const last = clipped[clipped.length - 1];
+  const lastProj = proj(last);
+
+  // Clip the edge that crosses the base plane, then pin to shaftEnd.
+  if (end < body.length && lastProj < -0.001) {
+    const next = body[end];
+    const nextProj = proj(next);
+    const t = lastProj / (lastProj - nextProj);
+    const cut = {
+      x: last.x + (next.x - last.x) * t,
+      y: last.y + (next.y - last.y) * t,
+    };
+    return [...clipped.slice(0, -1), cut, { ...shaftEnd }];
+  }
+
+  if (Math.hypot(last.x - shaftEnd.x, last.y - shaftEnd.y) < 0.5) {
+    return [...clipped.slice(0, -1), { ...shaftEnd }];
+  }
+  return [...clipped, { ...shaftEnd }];
+}
+
+function pathTipAngle(points: Point[], size: number): number | null {
+  if (points.length < 2) return null;
+  const tip = points[points.length - 1];
+  const totalLen = pathLength(points);
+  if (totalLen < 0.001) return null;
+  const tipLen = Math.min(size * 4, totalLen * 0.45);
+  const from = pointAlongPathFromEnd(points, Math.max(tipLen, size * 2));
+  const dx = tip.x - from.x;
+  const dy = tip.y - from.y;
+  if (Math.hypot(dx, dy) < 0.001) return null;
+  return Math.atan2(dy, dx);
+}
+
+/** Filled arrow tip at the stroke end; length/width scale with thickness. */
+function arrowHeadGeometry(
+  points: Point[],
+  size: number,
+  tipAngle?: number,
+): {
+  tip: Point;
+  left: Point;
+  right: Point;
+  shaftEnd: Point;
+  tipLen: number;
+  angle: number;
+} | null {
+  if (points.length < 2) return null;
+  const tip = points[points.length - 1];
+  const totalLen = pathLength(points);
+  if (totalLen < 0.001) return null;
+
+  // Tip size follows brush thickness. Once an explicit tipAngle is set (pivot),
+  // keep tipLen thickness-locked so orbiting the tip doesn't resize the head
+  // as the last segment stretches/shrinks.
+  const tipLen =
+    tipAngle != null
+      ? size * 4
+      : Math.min(size * 4, totalLen * 0.45);
+  if (tipLen < 0.5) return null;
+
+  const angle =
+    tipAngle ?? pathTipAngle(points, size) ?? Math.atan2(0, 1);
+  const ux = Math.cos(angle);
+  const uy = Math.sin(angle);
+  const tipWidth = tipLen * 0.65;
+  // Shaft ends exactly at the triangle base (locked through any tip pivot).
+  const shaftEnd = {
+    x: tip.x - ux * tipLen,
+    y: tip.y - uy * tipLen,
+  };
+  return {
+    tip,
+    left: {
+      x: tip.x - ux * tipLen - uy * tipWidth,
+      y: tip.y - uy * tipLen + ux * tipWidth,
+    },
+    right: {
+      x: tip.x - ux * tipLen + uy * tipWidth,
+      y: tip.y - uy * tipLen - ux * tipWidth,
+    },
+    shaftEnd,
+    tipLen,
+    angle,
+  };
+}
+
 export function drawStroke(
   ctx: CanvasRenderingContext2D,
-  stroke: FreehandStroke,
+  stroke: PathStroke,
   preview = false,
 ) {
   if (stroke.points.length === 0) return;
@@ -195,7 +391,11 @@ export function drawStroke(
   ctx.strokeStyle = stroke.color;
   ctx.fillStyle = stroke.color;
   ctx.lineWidth = stroke.size;
-  ctx.globalAlpha = preview ? 0.85 : 1;
+  const strokeAlpha = Math.max(
+    0,
+    Math.min(1, stroke.opacity ?? DEFAULT_STROKE_OPACITY),
+  );
+  ctx.globalAlpha = (preview ? 0.85 : 1) * strokeAlpha;
 
   if (stroke.points.length === 1) {
     const p = stroke.points[0];
@@ -206,7 +406,21 @@ export function drawStroke(
     return;
   }
 
-  const pts = stroke.points;
+  const head =
+    stroke.kind === "arrow"
+      ? arrowHeadGeometry(stroke.points, stroke.size, stroke.tipAngle)
+      : null;
+  // Shaft always ends at the tip base — angle-independent join.
+  const pts = head
+    ? pathEndingAtArrowBase(
+        stroke.points,
+        head.shaftEnd,
+        head.angle,
+        head.tipLen,
+        stroke.tipAngle != null,
+      )
+    : stroke.points;
+
   ctx.beginPath();
   ctx.moveTo(pts[0].x, pts[0].y);
 
@@ -224,6 +438,16 @@ export function drawStroke(
   }
 
   ctx.stroke();
+
+  if (head) {
+    ctx.beginPath();
+    ctx.moveTo(head.tip.x, head.tip.y);
+    ctx.lineTo(head.left.x, head.left.y);
+    ctx.lineTo(head.right.x, head.right.y);
+    ctx.closePath();
+    ctx.fill();
+  }
+
   ctx.restore();
 }
 
@@ -328,50 +552,202 @@ function drawHandles(ctx: CanvasRenderingContext2D, shape: ShapeStroke) {
   ctx.restore();
 }
 
-function thicknessGripCenter(shape: ShapeStroke): Point {
-  const b = shapeBounds(shape);
+/** Center of the arrow tip's base (where the triangle meets the shaft). */
+function arrowTipBaseCenter(stroke: PathStroke): Point | null {
+  const head = arrowHeadGeometry(stroke.points, stroke.size, stroke.tipAngle);
+  if (!head) return null;
+  return { ...head.shaftEnd };
+}
+
+/** Pivot handle sits just beyond the tip (Bluebeam-style) for rotation. */
+function arrowTipPivotCenter(stroke: PathStroke): Point | null {
+  if (stroke.kind !== "arrow") return null;
+  const head = arrowHeadGeometry(stroke.points, stroke.size, stroke.tipAngle);
+  if (!head) return null;
+  const ux = Math.cos(head.angle);
+  const uy = Math.sin(head.angle);
+  // Small distance past the tip vertex so the handle sits outside the tip
+  const ahead = HANDLE_SIZE * 1.6;
   return {
-    x: b.left - 14,
-    y: b.top + b.height / 2,
+    x: head.tip.x + ux * ahead,
+    y: head.tip.y + uy * ahead,
   };
 }
 
-function fillBtnCenter(shape: ShapeStroke): Point {
-  const b = shapeBounds(shape);
-  return {
-    x: b.right + 14,
-    y: b.top + b.height / 2,
-  };
+function drawArrowTipPivot(ctx: CanvasRenderingContext2D, stroke: PathStroke) {
+  const c = arrowTipPivotCenter(stroke);
+  if (!c) return;
+  const base = arrowTipBaseCenter(stroke);
+  if (!base) return;
+
+  ctx.save();
+  // Guide line from tip base (rotation center) to handle
+  ctx.beginPath();
+  ctx.moveTo(base.x, base.y);
+  ctx.lineTo(c.x, c.y);
+  ctx.strokeStyle = "rgba(47, 111, 237, 0.85)";
+  ctx.lineWidth = 1.25;
+  ctx.stroke();
+
+  ctx.beginPath();
+  ctx.arc(c.x, c.y, HANDLE_SIZE / 2, 0, Math.PI * 2);
+  ctx.fillStyle = "#2f6fed";
+  ctx.strokeStyle = "#ffffff";
+  ctx.lineWidth = 1.5;
+  ctx.fill();
+  ctx.stroke();
+  ctx.restore();
 }
 
-function opacitySliderBounds(shape: ShapeStroke): {
+/** Leftmost point on a freehand/arrow stroke (ties keep the first encountered). */
+function pathLeftmostPoint(stroke: PathStroke): Point {
+  if (stroke.points.length === 0) return { x: 0, y: 0 };
+  let best = stroke.points[0];
+  for (let i = 1; i < stroke.points.length; i++) {
+    const p = stroke.points[i];
+    if (p.x < best.x) best = p;
+  }
+  return best;
+}
+
+/** Rightmost point on a freehand/arrow stroke (ties keep the first encountered). */
+function pathRightmostPoint(stroke: PathStroke): Point {
+  if (stroke.points.length === 0) return { x: 0, y: 0 };
+  let best = stroke.points[0];
+  for (let i = 1; i < stroke.points.length; i++) {
+    const p = stroke.points[i];
+    if (p.x > best.x) best = p;
+  }
+  return best;
+}
+
+/**
+ * Leftmost / rightmost point on a shape. When several corners share the
+ * extreme x (axis-aligned edges), use their average y so the control sits
+ * on the edge midpoint.
+ */
+function shapeExtremePoint(shape: ShapeStroke, side: "left" | "right"): Point {
+  const pts = Object.values(shapeCorners(shape));
+  let bestX = pts[0].x;
+  for (const p of pts) {
+    if (side === "left" ? p.x < bestX : p.x > bestX) bestX = p.x;
+  }
+  let sumY = 0;
+  let n = 0;
+  for (const p of pts) {
+    if (p.x === bestX) {
+      sumY += p.y;
+      n++;
+    }
+  }
+  return { x: bestX, y: sumY / n };
+}
+
+function leftmostPoint(item: Drawable): Point {
+  if (isPathStroke(item)) return pathLeftmostPoint(item);
+  return shapeExtremePoint(item, "left");
+}
+
+function rightmostPoint(item: Drawable): Point {
+  if (isPathStroke(item)) return pathRightmostPoint(item);
+  return shapeExtremePoint(item, "right");
+}
+
+function thicknessGripCenter(
+  item: Drawable,
+  avoidPivot: Point | null = null,
+): Point {
+  const p = leftmostPoint(item);
+  let center = { x: p.x - 14, y: p.y };
+
+  // Pivot wins: push the size handle straight left when they would stack.
+  if (avoidPivot) {
+    const gripR = THICKNESS_GRIP_SIZE / 2;
+    const pivotR = HANDLE_SIZE / 2;
+    const clearX =
+      avoidPivot.x - pivotR - PIVOT_HANDLE_CLEARANCE - gripR;
+    const stackY = gripR + pivotR + PIVOT_HANDLE_CLEARANCE;
+    if (
+      Math.abs(center.y - avoidPivot.y) <= stackY &&
+      center.x > clearX
+    ) {
+      center = { x: clearX, y: center.y };
+    }
+  }
+
+  return center;
+}
+
+function fillBtnCenter(
+  shape: ShapeStroke,
+  opacitySliderVisible = itemShowsOpacitySlider(shape),
+): Point {
+  const p = shapeExtremePoint(shape, "right");
+  // Sit just past the opacity slider when it occupies the rightmost slot.
+  const gap = opacitySliderVisible ? 36 : 14;
+  return { x: p.x + gap, y: p.y };
+}
+
+function opacitySliderBounds(
+  item: Drawable,
+  avoidPivot: Point | null = null,
+): {
   x: number;
   top: number;
   bottom: number;
   midY: number;
 } {
-  const c = fillBtnCenter(shape);
   const half = OPACITY_SLIDER_HEIGHT / 2;
+  const p = rightmostPoint(item);
+  let x = p.x + 14;
+  const midY = p.y;
+
+  // Pivot wins: push the opacity slider straight right when they would stack.
+  if (avoidPivot) {
+    const pivotR = HANDLE_SIZE / 2;
+    const clearX =
+      avoidPivot.x + pivotR + PIVOT_HANDLE_CLEARANCE + OPACITY_KNOB_RADIUS;
+    const stackY = half + pivotR + PIVOT_HANDLE_CLEARANCE;
+    if (Math.abs(midY - avoidPivot.y) <= stackY && x < clearX) {
+      x = clearX;
+    }
+  }
+
   return {
-    x: c.x + 22,
-    top: c.y - half,
-    bottom: c.y + half,
-    midY: c.y,
+    x,
+    top: midY - half,
+    bottom: midY + half,
+    midY,
   };
 }
 
-function fillOpacityOf(shape: ShapeStroke): number {
-  return Math.max(0, Math.min(1, shape.fillOpacity ?? DEFAULT_FILL_OPACITY));
+function itemOpacity(item: Drawable): number {
+  if (isPathStroke(item)) {
+    return Math.max(0, Math.min(1, item.opacity ?? DEFAULT_STROKE_OPACITY));
+  }
+  return Math.max(0, Math.min(1, item.fillOpacity ?? DEFAULT_FILL_OPACITY));
 }
 
-function opacityKnobY(shape: ShapeStroke): number {
-  const s = opacitySliderBounds(shape);
+function opacityKnobY(
+  item: Drawable,
+  avoidPivot: Point | null = null,
+): number {
+  const s = opacitySliderBounds(item, avoidPivot);
   // Higher opacity = knob higher on the track
-  return s.bottom - fillOpacityOf(shape) * (s.bottom - s.top);
+  return s.bottom - itemOpacity(item) * (s.bottom - s.top);
 }
 
-function drawThicknessGrip(ctx: CanvasRenderingContext2D, shape: ShapeStroke) {
-  const c = thicknessGripCenter(shape);
+function itemShowsOpacitySlider(item: Drawable): boolean {
+  if (isPathStroke(item)) return true;
+  return !!item.filled;
+}
+
+function drawThicknessGrip(
+  ctx: CanvasRenderingContext2D,
+  item: Drawable,
+  avoidPivot: Point | null = null,
+) {
+  const c = thicknessGripCenter(item, avoidPivot);
   const r = THICKNESS_GRIP_SIZE / 2;
 
   ctx.save();
@@ -399,7 +775,7 @@ function drawThicknessGrip(ctx: CanvasRenderingContext2D, shape: ShapeStroke) {
 
   // Center stroke sample
   ctx.beginPath();
-  ctx.arc(c.x, c.y, Math.min(2.5, shape.size / 4 + 1), 0, Math.PI * 2);
+  ctx.arc(c.x, c.y, Math.min(2.5, item.size / 4 + 1), 0, Math.PI * 2);
   ctx.fill();
 
   // Right chevron
@@ -412,8 +788,12 @@ function drawThicknessGrip(ctx: CanvasRenderingContext2D, shape: ShapeStroke) {
   ctx.restore();
 }
 
-function drawFillBtn(ctx: CanvasRenderingContext2D, shape: ShapeStroke) {
-  const c = fillBtnCenter(shape);
+function drawFillBtn(
+  ctx: CanvasRenderingContext2D,
+  shape: ShapeStroke,
+  opacitySliderVisible = itemShowsOpacitySlider(shape),
+) {
+  const c = fillBtnCenter(shape, opacitySliderVisible);
   const r = FILL_BTN_SIZE / 2;
 
   ctx.save();
@@ -456,10 +836,13 @@ function drawFillBtn(ctx: CanvasRenderingContext2D, shape: ShapeStroke) {
   ctx.restore();
 }
 
-function drawOpacitySlider(ctx: CanvasRenderingContext2D, shape: ShapeStroke) {
-  const s = opacitySliderBounds(shape);
-  const knobY = opacityKnobY(shape);
-  const opacity = fillOpacityOf(shape);
+function drawOpacitySlider(
+  ctx: CanvasRenderingContext2D,
+  item: Drawable,
+  avoidPivot: Point | null = null,
+) {
+  const s = opacitySliderBounds(item, avoidPivot);
+  const knobY = opacityKnobY(item, avoidPivot);
 
   ctx.save();
   ctx.lineCap = "round";
@@ -485,16 +868,9 @@ function drawOpacitySlider(ctx: CanvasRenderingContext2D, shape: ShapeStroke) {
   ctx.strokeStyle = "#2f6fed";
   ctx.lineWidth = 1.5;
   ctx.beginPath();
-  ctx.arc(s.x, knobY, 6, 0, Math.PI * 2);
+  ctx.arc(s.x, knobY, OPACITY_KNOB_RADIUS, 0, Math.PI * 2);
   ctx.fill();
   ctx.stroke();
-
-  // Opacity preview swatch above the track
-  ctx.globalAlpha = opacity;
-  ctx.fillStyle = shape.color;
-  ctx.beginPath();
-  ctx.rect(s.x - 6, s.top - 16, 12, 10);
-  ctx.fill();
 
   ctx.restore();
 }
@@ -504,7 +880,7 @@ function drawDrawable(
   item: Drawable,
   preview = false,
 ) {
-  if (item.kind === "freehand") {
+  if (isPathStroke(item)) {
     drawStroke(ctx, item, preview);
   } else {
     drawShape(ctx, item, preview);
@@ -531,6 +907,17 @@ export class DrawingBoard {
   private thicknessStartX = 0;
   private thicknessStartSize = 4;
   private adjustingOpacity = false;
+  private adjustingTipPivot = false;
+  /** Fixed tip-base center while rotating the tip pivot handle. */
+  private tipPivotBase: Point | null = null;
+  private tipPivotLen = 0;
+  private showLineThicknessHandle = true;
+  private showLineOpacityHandle = true;
+  private showShapeThicknessHandle = true;
+  private showShapeOpacityHandle = true;
+  private applyThicknessToBrush = true;
+  private returnToFreehandAfterShape = true;
+  private showArrowTipPivot = true;
 
   constructor(canvas: HTMLCanvasElement) {
     const ctx = canvas.getContext("2d");
@@ -564,6 +951,39 @@ export class DrawingBoard {
     return this.tool;
   }
 
+  setShowLineThicknessHandle(show: boolean) {
+    this.showLineThicknessHandle = show;
+    this.redraw();
+  }
+
+  setShowLineOpacityHandle(show: boolean) {
+    this.showLineOpacityHandle = show;
+    this.redraw();
+  }
+
+  setShowShapeThicknessHandle(show: boolean) {
+    this.showShapeThicknessHandle = show;
+    this.redraw();
+  }
+
+  setShowShapeOpacityHandle(show: boolean) {
+    this.showShapeOpacityHandle = show;
+    this.redraw();
+  }
+
+  setApplyThicknessToBrush(apply: boolean) {
+    this.applyThicknessToBrush = apply;
+  }
+
+  setReturnToFreehandAfterShape(enabled: boolean) {
+    this.returnToFreehandAfterShape = enabled;
+  }
+
+  setShowArrowTipPivot(show: boolean) {
+    this.showArrowTipPivot = show;
+    this.redraw();
+  }
+
   /** Switch tool and lock any selected shape (hide handles). */
   selectTool(tool: Tool) {
     if (this.selectedIndex != null) {
@@ -575,7 +995,7 @@ export class DrawingBoard {
 
   setShiftHeld(held: boolean) {
     this.shiftHeld = held;
-    if (this.drawing && this.current && this.current.kind !== "freehand") {
+    if (this.drawing && this.current && isShapeStroke(this.current)) {
       // Live-update constrained aspect while Shift is toggled mid-drag
       this.current.end = constrainShapeEnd(
         this.current.origin,
@@ -599,7 +1019,7 @@ export class DrawingBoard {
   hitTestHandle(point: Point): Corner | null {
     if (this.selectedIndex == null) return null;
     const item = this.items[this.selectedIndex];
-    if (!item || item.kind === "freehand") return null;
+    if (!item || !isShapeStroke(item)) return null;
 
     const corners = shapeCorners(item);
     for (const [corner, c] of Object.entries(corners) as [Corner, Point][]) {
@@ -613,30 +1033,64 @@ export class DrawingBoard {
     return null;
   }
 
+  hitTestArrowTipPivot(point: Point): boolean {
+    if (!this.showArrowTipPivot) return false;
+    if (this.selectedIndex == null) return false;
+    const item = this.items[this.selectedIndex];
+    if (!item || !isPathStroke(item) || item.kind !== "arrow") return false;
+    const c = arrowTipPivotCenter(item);
+    if (!c) return false;
+    return Math.hypot(point.x - c.x, point.y - c.y) <= HANDLE_HIT;
+  }
+
   hitTestThicknessGrip(point: Point): boolean {
     if (this.selectedIndex == null) return false;
     const item = this.items[this.selectedIndex];
-    if (!item || item.kind === "freehand") return false;
+    if (!item) return false;
+    if (isPathStroke(item)) {
+      if (!this.showLineThicknessHandle) return false;
+    } else if (!this.showShapeThicknessHandle) {
+      return false;
+    }
 
-    const c = thicknessGripCenter(item);
+    const avoid =
+      this.showArrowTipPivot &&
+      isPathStroke(item) &&
+      item.kind === "arrow"
+        ? arrowTipPivotCenter(item)
+        : null;
+    const c = thicknessGripCenter(item, avoid);
     return Math.hypot(point.x - c.x, point.y - c.y) <= THICKNESS_GRIP_HIT;
   }
 
   hitTestFillBtn(point: Point): boolean {
     if (this.selectedIndex == null) return false;
     const item = this.items[this.selectedIndex];
-    if (!item || item.kind === "freehand") return false;
+    if (!item || !isShapeStroke(item)) return false;
 
-    const c = fillBtnCenter(item);
+    const opacityVisible =
+      this.showShapeOpacityHandle && itemShowsOpacitySlider(item);
+    const c = fillBtnCenter(item, opacityVisible);
     return Math.hypot(point.x - c.x, point.y - c.y) <= FILL_BTN_HIT;
   }
 
   hitTestOpacitySlider(point: Point): boolean {
     if (this.selectedIndex == null) return false;
     const item = this.items[this.selectedIndex];
-    if (!item || item.kind === "freehand" || !item.filled) return false;
+    if (!item || !itemShowsOpacitySlider(item)) return false;
+    if (isPathStroke(item)) {
+      if (!this.showLineOpacityHandle) return false;
+    } else if (!this.showShapeOpacityHandle) {
+      return false;
+    }
 
-    const s = opacitySliderBounds(item);
+    const avoid =
+      this.showArrowTipPivot &&
+      isPathStroke(item) &&
+      item.kind === "arrow"
+        ? arrowTipPivotCenter(item)
+        : null;
+    const s = opacitySliderBounds(item, avoid);
     return (
       Math.abs(point.x - s.x) <= OPACITY_SLIDER_HIT_W &&
       point.y >= s.top - 8 &&
@@ -644,10 +1098,35 @@ export class DrawingBoard {
     );
   }
 
-  private setFillOpacityFromPoint(shape: ShapeStroke, point: Point) {
-    const s = opacitySliderBounds(shape);
+  private setOpacityFromPoint(item: Drawable, point: Point) {
+    const avoid =
+      this.showArrowTipPivot &&
+      isPathStroke(item) &&
+      item.kind === "arrow"
+        ? arrowTipPivotCenter(item)
+        : null;
+    const s = opacitySliderBounds(item, avoid);
     const t = (s.bottom - point.y) / (s.bottom - s.top);
-    shape.fillOpacity = Math.max(0, Math.min(1, t));
+    const opacity = Math.max(0, Math.min(1, t));
+    if (isPathStroke(item)) {
+      item.opacity = opacity;
+    } else {
+      item.fillOpacity = opacity;
+    }
+  }
+
+  /** Rotate tip around its base; tip vertex orbits so the base stays fixed. */
+  private applyTipPivotRotation(item: PathStroke, point: Point) {
+    if (!this.tipPivotBase || item.points.length === 0) return;
+    const base = this.tipPivotBase;
+    const dx = point.x - base.x;
+    const dy = point.y - base.y;
+    if (Math.hypot(dx, dy) < 0.5) return;
+    const angle = Math.atan2(dy, dx);
+    item.tipAngle = angle;
+    const tip = item.points[item.points.length - 1];
+    tip.x = base.x + Math.cos(angle) * this.tipPivotLen;
+    tip.y = base.y + Math.sin(angle) * this.tipPivotLen;
   }
 
   resize() {
@@ -670,6 +1149,9 @@ export class DrawingBoard {
     this.resizeFreeCorner = false;
     this.adjustingThickness = false;
     this.adjustingOpacity = false;
+    this.adjustingTipPivot = false;
+    this.tipPivotBase = null;
+    this.tipPivotLen = 0;
     this.releaseCapture();
     this.redraw();
   }
@@ -701,7 +1183,7 @@ export class DrawingBoard {
     if (
       !this.shiftHeld ||
       !this.current ||
-      this.current.kind !== "freehand" ||
+      !isPathStroke(this.current) ||
       this.current.points.length === 0
     ) {
       return point;
@@ -714,11 +1196,50 @@ export class DrawingBoard {
     const point = this.pointerPos(e);
 
     if (this.hitTestOpacitySlider(point) && this.selectedIndex != null) {
-      const shape = this.items[this.selectedIndex];
-      if (shape && shape.kind !== "freehand" && shape.filled) {
+      const item = this.items[this.selectedIndex];
+      if (item && itemShowsOpacitySlider(item)) {
         this.drawing = true;
         this.adjustingOpacity = true;
-        this.setFillOpacityFromPoint(shape, point);
+        this.setOpacityFromPoint(item, point);
+        this.activePointerId = e.pointerId;
+        this.canvas.setPointerCapture(e.pointerId);
+        this.redraw();
+        return true;
+      }
+    }
+
+    if (this.hitTestArrowTipPivot(point) && this.selectedIndex != null) {
+      const item = this.items[this.selectedIndex];
+      if (item && isPathStroke(item) && item.kind === "arrow") {
+        const head = arrowHeadGeometry(item.points, item.size, item.tipAngle);
+        const base = arrowTipBaseCenter(item);
+        if (!head || !base) return false;
+        // Lock tip length to thickness so geometry stays consistent once
+        // tipAngle is set (orbiting must not resize the head).
+        const tipLen = item.size * 4;
+        const tip = {
+          x: base.x + Math.cos(head.angle) * tipLen,
+          y: base.y + Math.sin(head.angle) * tipLen,
+        };
+        // First pivot: bake the shaft so it ends at the tip base. Otherwise
+        // tip-region samples reappear when the tip orbits past ~90°.
+        if (item.tipAngle == null) {
+          const shaft = pathEndingAtArrowBase(
+            item.points,
+            base,
+            head.angle,
+            head.tipLen,
+          );
+          item.points = [...shaft.slice(0, -1), tip];
+        } else {
+          item.points[item.points.length - 1] = tip;
+        }
+        item.tipAngle = head.angle;
+        this.drawing = true;
+        this.adjustingTipPivot = true;
+        this.tipPivotBase = base;
+        this.tipPivotLen = tipLen;
+        this.applyTipPivotRotation(item, point);
         this.activePointerId = e.pointerId;
         this.canvas.setPointerCapture(e.pointerId);
         this.redraw();
@@ -728,7 +1249,7 @@ export class DrawingBoard {
 
     if (this.hitTestFillBtn(point) && this.selectedIndex != null) {
       const shape = this.items[this.selectedIndex];
-      if (shape && shape.kind !== "freehand") {
+      if (shape && isShapeStroke(shape)) {
         shape.filled = !shape.filled;
         if (shape.filled && shape.fillOpacity == null) {
           shape.fillOpacity = DEFAULT_FILL_OPACITY;
@@ -739,12 +1260,12 @@ export class DrawingBoard {
     }
 
     if (this.hitTestThicknessGrip(point) && this.selectedIndex != null) {
-      const shape = this.items[this.selectedIndex];
-      if (shape && shape.kind !== "freehand") {
+      const item = this.items[this.selectedIndex];
+      if (item) {
         this.drawing = true;
         this.adjustingThickness = true;
         this.thicknessStartX = point.x;
-        this.thicknessStartSize = shape.size;
+        this.thicknessStartSize = item.size;
         this.activePointerId = e.pointerId;
         this.canvas.setPointerCapture(e.pointerId);
         return true;
@@ -754,7 +1275,7 @@ export class DrawingBoard {
     const handle = this.hitTestHandle(point);
     if (handle && this.selectedIndex != null) {
       const shape = this.items[this.selectedIndex];
-      if (shape && shape.kind !== "freehand") {
+      if (shape && isShapeStroke(shape)) {
         this.drawing = true;
         this.resizeCorner = handle;
         this.resizeFreeCorner = e.ctrlKey || e.metaKey;
@@ -772,17 +1293,24 @@ export class DrawingBoard {
       }
     }
 
-    // Click elsewhere locks the selected shape (handles go away)
-    // and returns to freehand drawing.
+    // Click elsewhere locks the selection (handles go away) and starts
+    // the next stroke on this same click. Path tools keep their kind;
+    // shape tools either return to freehand or keep drawing shapes.
     if (this.selectedIndex != null) {
       this.selectedIndex = null;
-      this.tool = "freehand";
-      this.redraw();
-      return false;
+      if (this.tool === "freehand" || this.tool === "arrow") {
+        this.startPathStroke(e, point);
+      } else if (this.returnToFreehandAfterShape) {
+        this.tool = "freehand";
+        this.startPathStroke(e, point);
+      } else {
+        this.startShape(e, point);
+      }
+      return true;
     }
 
-    if (this.tool === "freehand") {
-      this.startFreehand(e, point);
+    if (this.tool === "freehand" || this.tool === "arrow") {
+      this.startPathStroke(e, point);
       return true;
     }
 
@@ -790,11 +1318,12 @@ export class DrawingBoard {
     return true;
   }
 
-  private startFreehand(e: PointerEvent, point: Point) {
+  private startPathStroke(e: PointerEvent, point: Point) {
+    const kind = this.tool === "arrow" ? "arrow" : "freehand";
     this.drawing = true;
     this.activePointerId = e.pointerId;
     this.current = {
-      kind: "freehand",
+      kind,
       points: [point],
       color: this.color,
       size: this.size,
@@ -804,7 +1333,7 @@ export class DrawingBoard {
   }
 
   private startShape(e: PointerEvent, point: Point) {
-    if (this.tool === "freehand") return;
+    if (this.tool === "freehand" || this.tool === "arrow") return;
     this.drawing = true;
     this.activePointerId = e.pointerId;
     this.current = {
@@ -832,21 +1361,33 @@ export class DrawingBoard {
     const point = this.pointerPos(e);
 
     if (this.adjustingOpacity && this.selectedIndex != null) {
-      const shape = this.items[this.selectedIndex];
-      if (shape && shape.kind !== "freehand" && shape.filled) {
-        this.setFillOpacityFromPoint(shape, point);
+      const item = this.items[this.selectedIndex];
+      if (item && itemShowsOpacitySlider(item)) {
+        this.setOpacityFromPoint(item, point);
+        this.redraw();
+      }
+      return;
+    }
+
+    if (this.adjustingTipPivot && this.selectedIndex != null) {
+      const item = this.items[this.selectedIndex];
+      if (item && isPathStroke(item) && item.kind === "arrow" && item.points.length > 0) {
+        this.applyTipPivotRotation(item, point);
         this.redraw();
       }
       return;
     }
 
     if (this.adjustingThickness && this.selectedIndex != null) {
-      const shape = this.items[this.selectedIndex];
-      if (shape && shape.kind !== "freehand") {
+      const item = this.items[this.selectedIndex];
+      if (item) {
         const delta = point.x - this.thicknessStartX;
         // Left = thicker, right = thinner (~1px stroke change per 4px drag)
         const next = Math.round(this.thicknessStartSize - delta / 4);
-        shape.size = Math.max(MIN_SHAPE_SIZE, Math.min(MAX_SHAPE_SIZE, next));
+        item.size = Math.max(MIN_SHAPE_SIZE, Math.min(MAX_SHAPE_SIZE, next));
+        if (this.applyThicknessToBrush) {
+          this.size = item.size;
+        }
         this.redraw();
       }
       return;
@@ -854,7 +1395,7 @@ export class DrawingBoard {
 
     if (this.resizeCorner && this.selectedIndex != null) {
       const shape = this.items[this.selectedIndex];
-      if (shape && shape.kind !== "freehand") {
+      if (shape && isShapeStroke(shape)) {
         if (this.resizeFreeCorner && shape.corners) {
           shape.corners[this.resizeCorner] = { ...point };
         } else if (this.resizeAnchor) {
@@ -875,7 +1416,7 @@ export class DrawingBoard {
 
     if (!this.current) return;
 
-    if (this.current.kind !== "freehand") {
+    if (!isPathStroke(this.current)) {
       this.current.end = constrainShapeEnd(
         this.current.origin,
         point,
@@ -898,11 +1439,12 @@ export class DrawingBoard {
     this.redraw();
   }
 
-  endStroke(e?: PointerEvent) {
-    if (!this.drawing) return;
+  /** Returns true if a thickness-handle drag just finished. */
+  endStroke(e?: PointerEvent): boolean {
+    if (!this.drawing) return false;
 
     if (e && this.activePointerId != null && e.pointerId !== this.activePointerId) {
-      return;
+      return false;
     }
 
     if (this.adjustingOpacity) {
@@ -910,7 +1452,17 @@ export class DrawingBoard {
       this.adjustingOpacity = false;
       this.drawing = false;
       this.redraw();
-      return;
+      return false;
+    }
+
+    if (this.adjustingTipPivot) {
+      this.releaseCapture();
+      this.adjustingTipPivot = false;
+      this.tipPivotBase = null;
+      this.tipPivotLen = 0;
+      this.drawing = false;
+      this.redraw();
+      return false;
     }
 
     if (this.adjustingThickness) {
@@ -918,7 +1470,7 @@ export class DrawingBoard {
       this.adjustingThickness = false;
       this.drawing = false;
       this.redraw();
-      return;
+      return true;
     }
 
     if (this.resizeCorner && this.selectedIndex != null) {
@@ -928,18 +1480,18 @@ export class DrawingBoard {
       this.resizeFreeCorner = false;
       this.drawing = false;
       this.redraw();
-      return;
+      return false;
     }
 
     if (!this.current) {
       this.drawing = false;
       this.releaseCapture();
-      return;
+      return false;
     }
 
     if (e) {
       const point = this.pointerPos(e);
-      if (this.current.kind !== "freehand") {
+      if (!isPathStroke(this.current)) {
         this.current.end = constrainShapeEnd(
           this.current.origin,
           point,
@@ -960,11 +1512,14 @@ export class DrawingBoard {
 
     this.releaseCapture();
 
-    if (this.current.kind !== "freehand") {
+    if (!isPathStroke(this.current)) {
       const b = shapeBounds(this.current);
       if (b.width >= 1 || b.height >= 1) {
         this.items.push(this.current);
         this.selectedIndex = this.items.length - 1;
+        if (this.returnToFreehandAfterShape) {
+          this.tool = "freehand";
+        }
       }
     } else {
       const raw = this.current.points;
@@ -972,16 +1527,19 @@ export class DrawingBoard {
         this.shiftHeld || raw.length < 3 ? raw : smoothStroke(raw);
 
       this.items.push({
-        kind: "freehand",
+        kind: this.current.kind,
         points: smoothed,
         color: this.current.color,
         size: this.current.size,
+        opacity: this.current.opacity,
       });
+      this.selectedIndex = this.items.length - 1;
     }
 
     this.current = null;
     this.drawing = false;
     this.redraw();
+    return false;
   }
 
   redraw() {
@@ -994,11 +1552,29 @@ export class DrawingBoard {
     }
     if (this.selectedIndex != null) {
       const selected = this.items[this.selectedIndex];
-      if (selected && selected.kind !== "freehand") {
+      if (selected && isPathStroke(selected)) {
+        if (selected.kind === "arrow" && this.showArrowTipPivot) {
+          drawArrowTipPivot(this.ctx, selected);
+        }
+        const avoidPivot =
+          selected.kind === "arrow" && this.showArrowTipPivot
+            ? arrowTipPivotCenter(selected)
+            : null;
+        if (this.showLineThicknessHandle) {
+          drawThicknessGrip(this.ctx, selected, avoidPivot);
+        }
+        if (this.showLineOpacityHandle) {
+          drawOpacitySlider(this.ctx, selected, avoidPivot);
+        }
+      } else if (selected) {
         drawHandles(this.ctx, selected);
-        drawThicknessGrip(this.ctx, selected);
-        drawFillBtn(this.ctx, selected);
-        if (selected.filled) {
+        if (this.showShapeThicknessHandle) {
+          drawThicknessGrip(this.ctx, selected);
+        }
+        const opacityVisible =
+          this.showShapeOpacityHandle && selected.filled;
+        drawFillBtn(this.ctx, selected, opacityVisible);
+        if (opacityVisible) {
           drawOpacitySlider(this.ctx, selected);
         }
       }

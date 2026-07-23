@@ -17,29 +17,53 @@ export const DEFAULT_PRESET_COLORS = [
 export type Settings = {
   activateHotkey: string;
   colorHotkey: string;
+  colorHotkeyEnabled: boolean;
   shapeHotkey: string;
+  shapeHotkeyEnabled: boolean;
   sizeScrollHotkey: string;
   toolbarX: number | null;
   toolbarY: number | null;
+  settingsX: number | null;
+  settingsY: number | null;
   color: string;
   brushSize: number;
   sizeScrollSensitivity: number;
   brushPersistence: BrushPersistence;
   presetColors: string[];
+  showLineThicknessHandle: boolean;
+  showLineOpacityHandle: boolean;
+  showShapeThicknessHandle: boolean;
+  showShapeOpacityHandle: boolean;
+  applyThicknessToBrush: boolean;
+  /** After finishing a rect/ellipse, switch tool back to freehand. */
+  returnToFreehandAfterShape: boolean;
+  /** Show the tip pivot handle on selected arrows. */
+  showArrowTipPivot: boolean;
 };
 
 const DEFAULTS: Settings = {
   activateHotkey: "Ctrl+Alt+D",
   colorHotkey: "C",
+  colorHotkeyEnabled: true,
   shapeHotkey: "S",
+  shapeHotkeyEnabled: true,
   sizeScrollHotkey: "Shift",
   toolbarX: null,
   toolbarY: null,
+  settingsX: null,
+  settingsY: null,
   color: "#ff2d2d",
   brushSize: 4,
   sizeScrollSensitivity: 4,
   brushPersistence: "rememberLast",
   presetColors: [...DEFAULT_PRESET_COLORS],
+  showLineThicknessHandle: true,
+  showLineOpacityHandle: true,
+  showShapeThicknessHandle: true,
+  showShapeOpacityHandle: true,
+  applyThicknessToBrush: true,
+  returnToFreehandAfterShape: true,
+  showArrowTipPivot: true,
 };
 
 const store = new LazyStore("settings.json");
@@ -82,6 +106,56 @@ export async function loadSettings(): Promise<Settings> {
   ) {
     settings.brushPersistence = DEFAULTS.brushPersistence;
   }
+  const legacy = saved as Partial<Settings> & {
+    showThicknessHandle?: boolean;
+    showOpacityHandle?: boolean;
+  };
+  const legacyThickness =
+    typeof legacy.showThicknessHandle === "boolean"
+      ? legacy.showThicknessHandle
+      : undefined;
+  const legacyOpacity =
+    typeof legacy.showOpacityHandle === "boolean"
+      ? legacy.showOpacityHandle
+      : undefined;
+  settings.showLineThicknessHandle =
+    typeof settings.showLineThicknessHandle === "boolean"
+      ? settings.showLineThicknessHandle
+      : (legacyThickness ?? DEFAULTS.showLineThicknessHandle);
+  settings.showLineOpacityHandle =
+    typeof settings.showLineOpacityHandle === "boolean"
+      ? settings.showLineOpacityHandle
+      : (legacyOpacity ?? DEFAULTS.showLineOpacityHandle);
+  settings.showShapeThicknessHandle =
+    typeof settings.showShapeThicknessHandle === "boolean"
+      ? settings.showShapeThicknessHandle
+      : (legacyThickness ?? DEFAULTS.showShapeThicknessHandle);
+  settings.showShapeOpacityHandle =
+    typeof settings.showShapeOpacityHandle === "boolean"
+      ? settings.showShapeOpacityHandle
+      : (legacyOpacity ?? DEFAULTS.showShapeOpacityHandle);
+  settings.applyThicknessToBrush =
+    typeof settings.applyThicknessToBrush === "boolean"
+      ? settings.applyThicknessToBrush
+      : DEFAULTS.applyThicknessToBrush;
+  settings.returnToFreehandAfterShape =
+    typeof settings.returnToFreehandAfterShape === "boolean"
+      ? settings.returnToFreehandAfterShape
+      : DEFAULTS.returnToFreehandAfterShape;
+  settings.showArrowTipPivot =
+    typeof settings.showArrowTipPivot === "boolean"
+      ? settings.showArrowTipPivot
+      : DEFAULTS.showArrowTipPivot;
+  delete (settings as { showThicknessHandle?: boolean }).showThicknessHandle;
+  delete (settings as { showOpacityHandle?: boolean }).showOpacityHandle;
+  settings.colorHotkeyEnabled =
+    typeof settings.colorHotkeyEnabled === "boolean"
+      ? settings.colorHotkeyEnabled
+      : DEFAULTS.colorHotkeyEnabled;
+  settings.shapeHotkeyEnabled =
+    typeof settings.shapeHotkeyEnabled === "boolean"
+      ? settings.shapeHotkeyEnabled
+      : DEFAULTS.shapeHotkeyEnabled;
   const color = normalizeHex(settings.color);
   settings.color = color ?? DEFAULTS.color;
   settings.shapeHotkey = settings.shapeHotkey || DEFAULTS.shapeHotkey;

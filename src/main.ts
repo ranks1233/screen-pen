@@ -1,8 +1,9 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { DrawingBoard, type Corner, type ShapeKind, type Tool } from "./draw";
+import { DrawingBoard, type Corner, type Tool } from "./draw";
 import {
+  DEFAULT_PRESET_COLORS,
   formatHotkeyFromEvent,
   formatModifierHotkeyFromEvent,
   loadSettings,
@@ -17,13 +18,18 @@ type HotkeyTarget = "activate" | "color" | "shape" | "sizeScroll";
 
 const canvas = document.getElementById("draw-canvas") as HTMLCanvasElement;
 const toolbar = document.getElementById("toolbar") as HTMLElement;
-const dragHandle = document.getElementById("drag-handle") as HTMLButtonElement;
 const drawBtn = document.getElementById("draw-btn") as HTMLButtonElement;
 const colorBtn = document.getElementById("color-btn") as HTMLButtonElement;
 const colorSwatch = document.getElementById("color-swatch") as HTMLElement;
 const colorPanel = document.getElementById("color-panel") as HTMLElement;
 const colorPresets = document.getElementById("color-presets") as HTMLElement;
 const colorInput = document.getElementById("color-input") as HTMLInputElement;
+const editColorInput = document.getElementById(
+  "edit-color-input",
+) as HTMLInputElement;
+const editColorPresets = document.getElementById(
+  "edit-color-presets",
+) as HTMLElement;
 const addPresetBtn = document.getElementById(
   "add-preset-btn",
 ) as HTMLButtonElement;
@@ -32,15 +38,25 @@ const shapePanel = document.getElementById("shape-panel") as HTMLElement;
 const shapeOptions = document.getElementById("shape-options") as HTMLElement;
 const settingsBtn = document.getElementById("settings-btn") as HTMLButtonElement;
 const settingsPanel = document.getElementById("settings-panel") as HTMLElement;
+const settingsBasic = document.getElementById("settings-basic") as HTMLElement;
+const settingsTitle = document.getElementById("settings-title") as HTMLElement;
 const settingsClose = document.getElementById("settings-close") as HTMLButtonElement;
-const settingsHint = document.getElementById("settings-hint") as HTMLElement;
+const resetPresetsBtn = document.getElementById(
+  "reset-presets-btn",
+) as HTMLButtonElement;
 const hotkeyBtn = document.getElementById("hotkey-btn") as HTMLButtonElement;
 const colorHotkeyBtn = document.getElementById(
   "color-hotkey-btn",
 ) as HTMLButtonElement;
+const colorHotkeyEnabled = document.getElementById(
+  "color-hotkey-enabled",
+) as HTMLInputElement;
 const shapeHotkeyBtn = document.getElementById(
   "shape-hotkey-btn",
 ) as HTMLButtonElement;
+const shapeHotkeyEnabled = document.getElementById(
+  "shape-hotkey-enabled",
+) as HTMLInputElement;
 const sizeHotkeyBtn = document.getElementById(
   "size-hotkey-btn",
 ) as HTMLButtonElement;
@@ -58,6 +74,15 @@ const brushPersistRemember = document.getElementById(
   "brush-persist-remember",
 ) as HTMLInputElement;
 const brushDefaults = document.getElementById("brush-defaults") as HTMLElement;
+const defaultColorPicker = document.getElementById(
+  "default-color-picker",
+) as HTMLElement;
+const defaultColorBtn = document.getElementById(
+  "default-color-btn",
+) as HTMLButtonElement;
+const defaultColorSwatch = document.getElementById(
+  "default-color-swatch",
+) as HTMLElement;
 const defaultColorPresets = document.getElementById(
   "default-color-presets",
 ) as HTMLElement;
@@ -65,12 +90,42 @@ const defaultSize = document.getElementById("default-size") as HTMLInputElement;
 const defaultSizeValue = document.getElementById(
   "default-size-value",
 ) as HTMLElement;
+const showLineThicknessHandle = document.getElementById(
+  "show-line-thickness-handle",
+) as HTMLInputElement;
+const showLineOpacityHandle = document.getElementById(
+  "show-line-opacity-handle",
+) as HTMLInputElement;
+const showShapeThicknessHandle = document.getElementById(
+  "show-shape-thickness-handle",
+) as HTMLInputElement;
+const showShapeOpacityHandle = document.getElementById(
+  "show-shape-opacity-handle",
+) as HTMLInputElement;
+const applyThicknessToBrush = document.getElementById(
+  "apply-thickness-to-brush",
+) as HTMLInputElement;
+const returnToFreehandAfterShape = document.getElementById(
+  "return-to-freehand-after-shape",
+) as HTMLInputElement;
+const showArrowTipPivot = document.getElementById(
+  "show-arrow-tip-pivot",
+) as HTMLInputElement;
+const advancedSettingsToggle = document.getElementById(
+  "advanced-settings-toggle",
+) as HTMLButtonElement;
+const hideAdvancedSettings = document.getElementById(
+  "hide-advanced-settings",
+) as HTMLButtonElement;
+const advancedSettings = document.getElementById(
+  "advanced-settings",
+) as HTMLElement;
 
 const board = new DrawingBoard(canvas);
 let settings: Settings;
 let recordingHotkey: HotkeyTarget | null = null;
 let active = false;
-
+let pointerPos = { x: 0, y: 0 };
 function placeToolbarDefault() {
   const margin = 24;
   const x = window.innerWidth - toolbar.offsetWidth - margin;
@@ -92,13 +147,53 @@ function applyToolbarPosition() {
   toolbar.style.top = `${y}px`;
 }
 
+function applySettingsPanelPosition(anchor: HTMLElement = settingsBtn) {
+  if (settings.settingsX == null || settings.settingsY == null) {
+    positionPanel(settingsPanel, anchor);
+    return;
+  }
+  const maxX = window.innerWidth - settingsPanel.offsetWidth - 8;
+  const maxY = window.innerHeight - settingsPanel.offsetHeight - 8;
+  const x = Math.min(Math.max(8, settings.settingsX), Math.max(8, maxX));
+  const y = Math.min(Math.max(8, settings.settingsY), Math.max(8, maxY));
+  settingsPanel.style.left = `${x}px`;
+  settingsPanel.style.top = `${y}px`;
+}
+
 function updateColorUi(color: string) {
   const hex = normalizeHex(color) ?? color;
   colorSwatch.style.background = hex;
   colorInput.value = hex;
+  defaultColorSwatch.style.background =
+    normalizeHex(settings.color) ?? settings.color;
   board.setColor(hex);
-  updateAddPresetBtn();
+  sizePreview.style.background = hex;
   markSelectedPresets();
+}
+
+function positionSizePreview(x: number, y: number) {
+  pointerPos = { x, y };
+  sizePreview.style.left = `${x}px`;
+  sizePreview.style.top = `${y}px`;
+}
+
+function showSizePreview() {
+  sizePreview.classList.add("visible");
+}
+
+function hideSizePreview() {
+  sizePreview.classList.remove("visible");
+}
+
+function syncSizePreviewVisibility(
+  mods: Pick<WheelEvent, "ctrlKey" | "altKey" | "shiftKey" | "metaKey">,
+) {
+  if (!active || !matchesSizeScrollHotkey(mods, settings.sizeScrollHotkey)) {
+    hideSizePreview();
+    return;
+  }
+  positionSizePreview(pointerPos.x, pointerPos.y);
+  showSizePreview();
 }
 
 function updateSizeUi(size: number) {
@@ -119,7 +214,23 @@ function updateSensitivityUi(value: number) {
 function updateBrushDefaultsUi() {
   defaultSize.value = String(settings.brushSize);
   defaultSizeValue.textContent = String(settings.brushSize);
+  defaultColorSwatch.style.background = settings.color;
   buildDefaultColorPresets();
+}
+
+function setDefaultColorFlyoutOpen(open: boolean) {
+  defaultColorPicker.classList.toggle("open", open);
+  defaultColorBtn.setAttribute("aria-expanded", String(open));
+  if (open) {
+    positionDefaultColorFlyout();
+  }
+}
+
+function positionDefaultColorFlyout() {
+  const rect = defaultColorBtn.getBoundingClientRect();
+  defaultColorPresets.style.top = `${rect.top + rect.height / 2}px`;
+  defaultColorPresets.style.right = `${window.innerWidth - rect.left + 8}px`;
+  defaultColorPresets.style.left = "auto";
 }
 
 function updateBrushPersistenceUi(mode: BrushPersistence) {
@@ -127,11 +238,50 @@ function updateBrushPersistenceUi(mode: BrushPersistence) {
   brushPersistDefault.checked = mode === "default";
   brushPersistRemember.checked = mode === "rememberLast";
   brushDefaults.classList.toggle("hidden", mode !== "default");
+  if (mode !== "default") {
+    setDefaultColorFlyoutOpen(false);
+  }
   if (mode === "default") {
     updateBrushDefaultsUi();
   }
+}
+
+function updateHandleOptionsUi() {
+  showLineThicknessHandle.checked = settings.showLineThicknessHandle;
+  showLineOpacityHandle.checked = settings.showLineOpacityHandle;
+  showShapeThicknessHandle.checked = settings.showShapeThicknessHandle;
+  showShapeOpacityHandle.checked = settings.showShapeOpacityHandle;
+  applyThicknessToBrush.checked = settings.applyThicknessToBrush;
+  returnToFreehandAfterShape.checked = settings.returnToFreehandAfterShape;
+  showArrowTipPivot.checked = settings.showArrowTipPivot;
+  board.setShowLineThicknessHandle(settings.showLineThicknessHandle);
+  board.setShowLineOpacityHandle(settings.showLineOpacityHandle);
+  board.setShowShapeThicknessHandle(settings.showShapeThicknessHandle);
+  board.setShowShapeOpacityHandle(settings.showShapeOpacityHandle);
+  board.setApplyThicknessToBrush(settings.applyThicknessToBrush);
+  board.setReturnToFreehandAfterShape(settings.returnToFreehandAfterShape);
+  board.setShowArrowTipPivot(settings.showArrowTipPivot);
+}
+
+function setAdvancedSettingsOpen(open: boolean) {
+  settingsBasic.classList.toggle("hidden", open);
+  advancedSettings.classList.toggle("hidden", !open);
+  advancedSettingsToggle.setAttribute("aria-expanded", String(open));
+  hideAdvancedSettings.setAttribute("aria-expanded", String(open));
+  settingsTitle.textContent = open ? "Advanced settings" : "Settings";
+  settingsPanel.setAttribute(
+    "aria-label",
+    open ? "Advanced settings" : "Settings",
+  );
+  if (!open) {
+    setDefaultColorFlyoutOpen(false);
+  }
+  if (open) {
+    updateAddPresetBtn();
+    buildEditColorPresets();
+  }
   if (!settingsPanel.classList.contains("hidden")) {
-    positionPanel(settingsPanel);
+    applySettingsPanelPosition(settingsBtn);
   }
 }
 
@@ -147,8 +297,21 @@ function hasPreset(color: string): boolean {
   return settings.presetColors.includes(hex);
 }
 
+function presetsMatchDefaults(): boolean {
+  if (settings.presetColors.length !== DEFAULT_PRESET_COLORS.length) {
+    return false;
+  }
+  return settings.presetColors.every(
+    (color, i) => color === DEFAULT_PRESET_COLORS[i],
+  );
+}
+
+function updateResetPresetsBtn() {
+  resetPresetsBtn.disabled = presetsMatchDefaults();
+}
+
 function updateAddPresetBtn() {
-  const hex = normalizeHex(colorInput.value);
+  const hex = normalizeHex(editColorInput.value);
   addPresetBtn.disabled = !hex || hasPreset(hex);
 }
 
@@ -183,7 +346,19 @@ function updateSizeScrollHotkeyUi(hotkey: string) {
   settings.sizeScrollHotkey = hotkey;
   sizeHotkeyBtn.textContent = hotkey;
   sizePreview.title = `Brush size (${hotkey} + scroll)`;
-  settingsHint.textContent = `${hotkey} + scroll changes brush size. Click a hotkey button, then press a new shortcut. Esc cancels. Size change accepts modifier keys only.`;
+}
+
+function updatePanelHotkeyEnableUi() {
+  colorHotkeyEnabled.checked = settings.colorHotkeyEnabled;
+  shapeHotkeyEnabled.checked = settings.shapeHotkeyEnabled;
+  colorHotkeyBtn.disabled = !settings.colorHotkeyEnabled;
+  shapeHotkeyBtn.disabled = !settings.shapeHotkeyEnabled;
+  if (!settings.colorHotkeyEnabled && recordingHotkey === "color") {
+    stopHotkeyRecording();
+  }
+  if (!settings.shapeHotkeyEnabled && recordingHotkey === "shape") {
+    stopHotkeyRecording();
+  }
 }
 
 function stopHotkeyRecording() {
@@ -198,6 +373,8 @@ function closePanels() {
   colorPanel.classList.add("hidden");
   shapePanel.classList.add("hidden");
   settingsPanel.classList.add("hidden");
+  setDefaultColorFlyoutOpen(false);
+  setAdvancedSettingsOpen(false);
   stopHotkeyRecording();
 }
 
@@ -219,7 +396,6 @@ function toggleColorPanel() {
   stopHotkeyRecording();
   colorPanel.classList.toggle("hidden");
   if (!colorPanel.classList.contains("hidden")) {
-    updateAddPresetBtn();
     positionPanel(colorPanel, colorBtn);
   }
 }
@@ -260,6 +436,7 @@ function updateCanvasCursorClass(hoverHandle: Corner | null = null) {
     "thickness-grip",
     "fill-btn",
     "opacity-slider",
+    "tip-pivot",
   );
   if (hoverHandle) {
     canvas.classList.add(`resize-${hoverHandle}`);
@@ -280,8 +457,23 @@ function updateHoverCursor(point: { x: number; y: number }) {
       "resize-se",
       "thickness-grip",
       "fill-btn",
+      "tip-pivot",
     );
     canvas.classList.add("opacity-slider");
+    return;
+  }
+  if (board.hitTestArrowTipPivot(point)) {
+    canvas.classList.remove(
+      "shape-tool",
+      "resize-nw",
+      "resize-ne",
+      "resize-sw",
+      "resize-se",
+      "thickness-grip",
+      "fill-btn",
+      "opacity-slider",
+    );
+    canvas.classList.add("tip-pivot");
     return;
   }
   if (board.hitTestFillBtn(point)) {
@@ -293,6 +485,7 @@ function updateHoverCursor(point: { x: number; y: number }) {
       "resize-se",
       "thickness-grip",
       "opacity-slider",
+      "tip-pivot",
     );
     canvas.classList.add("fill-btn");
     return;
@@ -306,6 +499,7 @@ function updateHoverCursor(point: { x: number; y: number }) {
       "resize-se",
       "fill-btn",
       "opacity-slider",
+      "tip-pivot",
     );
     canvas.classList.add("thickness-grip");
     return;
@@ -317,7 +511,9 @@ function updateHoverCursor(point: { x: number; y: number }) {
 function isUiTarget(target: EventTarget | null): boolean {
   if (!(target instanceof Element)) return false;
   return Boolean(
-    target.closest("#toolbar, #color-panel, #shape-panel, #settings-panel"),
+    target.closest(
+      "#toolbar, #color-panel, #shape-panel, #settings-panel, #default-color-presets",
+    ),
   );
 }
 
@@ -344,6 +540,7 @@ async function activate() {
 
 async function deactivate() {
   active = false;
+  hideSizePreview();
   document.body.classList.remove("active");
   closePanels();
   setShapeTool("freehand");
@@ -371,14 +568,43 @@ function createPresetButton(
 function buildColorPresets() {
   colorPresets.innerHTML = "";
   for (const color of settings.presetColors) {
-    const wrap = document.createElement("div");
-    wrap.className = "preset-wrap";
-
     const btn = createPresetButton(color, async (picked) => {
       updateColorUi(picked);
       updateSizeUi(board.getSize());
       await persist();
       colorPanel.classList.add("hidden");
+    });
+    colorPresets.appendChild(btn);
+  }
+  markSelectedPresets();
+}
+
+function buildDefaultColorPresets() {
+  defaultColorPresets.innerHTML = "";
+  for (const color of settings.presetColors) {
+    const btn = createPresetButton(color, async (picked) => {
+      settings.color = picked;
+      defaultColorSwatch.style.background = picked;
+      updateColorUi(picked);
+      updateSizeUi(board.getSize());
+      markSelectedPresets();
+      setDefaultColorFlyoutOpen(false);
+      await saveSettings(settings);
+    });
+    defaultColorPresets.appendChild(btn);
+  }
+  markSelectedPresets();
+}
+
+function buildEditColorPresets() {
+  editColorPresets.innerHTML = "";
+  for (const color of settings.presetColors) {
+    const wrap = document.createElement("div");
+    wrap.className = "preset-wrap";
+
+    const btn = createPresetButton(color, (picked) => {
+      editColorInput.value = picked;
+      updateAddPresetBtn();
     });
 
     const remove = document.createElement("button");
@@ -394,37 +620,17 @@ function buildColorPresets() {
     });
 
     wrap.append(btn, remove);
-    colorPresets.appendChild(wrap);
+    editColorPresets.appendChild(wrap);
   }
-  markSelectedPresets();
   updateAddPresetBtn();
-}
-
-function buildDefaultColorPresets() {
-  defaultColorPresets.innerHTML = "";
-  for (const color of settings.presetColors) {
-    const btn = createPresetButton(color, async (picked) => {
-      settings.color = picked;
-      updateColorUi(picked);
-      updateSizeUi(board.getSize());
-      markSelectedPresets();
-      await saveSettings(settings);
-    });
-    defaultColorPresets.appendChild(btn);
-  }
-  markSelectedPresets();
+  updateResetPresetsBtn();
 }
 
 function rebuildPresetUi() {
   buildColorPresets();
+  buildEditColorPresets();
   if (settings.brushPersistence === "default") {
     buildDefaultColorPresets();
-  }
-  if (!colorPanel.classList.contains("hidden")) {
-    positionPanel(colorPanel);
-  }
-  if (!settingsPanel.classList.contains("hidden")) {
-    positionPanel(settingsPanel);
   }
 }
 
@@ -444,44 +650,87 @@ async function removePresetColor(color: string) {
   await saveSettings(settings);
 }
 
-function setupToolbarDrag() {
+async function resetPresetColors() {
+  if (presetsMatchDefaults()) return;
+  settings.presetColors = [...DEFAULT_PRESET_COLORS];
+  rebuildPresetUi();
+  await saveSettings(settings);
+}
+
+function isInteractiveUiTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof Element)) return false;
+  return Boolean(
+    target.closest(
+      "button, input, select, textarea, a, label, [role='button'], [contenteditable='true']",
+    ),
+  );
+}
+
+function setupElementDrag(
+  handle: HTMLElement,
+  target: HTMLElement,
+  onEnd?: (rect: DOMRect) => void | Promise<void>,
+) {
   let dragging = false;
   let offsetX = 0;
   let offsetY = 0;
 
-  dragHandle.addEventListener("pointerdown", (e) => {
+  handle.addEventListener("pointerdown", (e) => {
+    if (e.button !== 0) return;
+    if (isInteractiveUiTarget(e.target)) return;
     dragging = true;
-    dragHandle.setPointerCapture(e.pointerId);
-    const rect = toolbar.getBoundingClientRect();
+    handle.setPointerCapture(e.pointerId);
+    const rect = target.getBoundingClientRect();
     offsetX = e.clientX - rect.left;
     offsetY = e.clientY - rect.top;
     e.preventDefault();
   });
 
-  dragHandle.addEventListener("pointermove", (e) => {
+  handle.addEventListener("pointermove", (e) => {
     if (!dragging) return;
-    const x = e.clientX - offsetX;
-    const y = e.clientY - offsetY;
-    toolbar.style.left = `${x}px`;
-    toolbar.style.top = `${y}px`;
+    const maxX = window.innerWidth - target.offsetWidth;
+    const maxY = window.innerHeight - target.offsetHeight;
+    const x = Math.min(Math.max(0, e.clientX - offsetX), Math.max(0, maxX));
+    const y = Math.min(Math.max(0, e.clientY - offsetY), Math.max(0, maxY));
+    target.style.left = `${x}px`;
+    target.style.top = `${y}px`;
+    if (
+      target === settingsPanel &&
+      defaultColorPicker.classList.contains("open")
+    ) {
+      positionDefaultColorFlyout();
+    }
   });
 
   const endDrag = async (e: PointerEvent) => {
     if (!dragging) return;
     dragging = false;
     try {
-      dragHandle.releasePointerCapture(e.pointerId);
+      handle.releasePointerCapture(e.pointerId);
     } catch {
       /* already released */
     }
-    const rect = toolbar.getBoundingClientRect();
+    if (onEnd) await onEnd(target.getBoundingClientRect());
+  };
+
+  handle.addEventListener("pointerup", endDrag);
+  handle.addEventListener("pointercancel", endDrag);
+}
+
+function setupToolbarDrag() {
+  setupElementDrag(toolbar, toolbar, async (rect) => {
     settings.toolbarX = rect.left;
     settings.toolbarY = rect.top;
     await persist();
-  };
+  });
+}
 
-  dragHandle.addEventListener("pointerup", endDrag);
-  dragHandle.addEventListener("pointercancel", endDrag);
+function setupSettingsDrag() {
+  setupElementDrag(settingsPanel, settingsPanel, async (rect) => {
+    settings.settingsX = rect.left;
+    settings.settingsY = rect.top;
+    await persist();
+  });
 }
 
 function setupDrawing() {
@@ -489,6 +738,7 @@ function setupDrawing() {
     if (!active || isUiTarget(e.target)) return;
     if (e.button !== 0) return;
     closePanels();
+    positionSizePreview(e.clientX, e.clientY);
     board.pointerDown(e);
     markSelectedShapeOption();
     updateCanvasCursorClass();
@@ -496,6 +746,7 @@ function setupDrawing() {
 
   canvas.addEventListener("pointermove", (e) => {
     if (!active) return;
+    positionSizePreview(e.clientX, e.clientY);
     board.continueStroke(e);
     if (e.buttons === 0) {
       updateHoverCursor({ x: e.clientX, y: e.clientY });
@@ -504,12 +755,22 @@ function setupDrawing() {
 
   canvas.addEventListener("pointerup", (e) => {
     if (!active) return;
-    board.endStroke(e);
+    const thicknessChanged = board.endStroke(e);
+    if (thicknessChanged && settings.applyThicknessToBrush) {
+      updateSizeUi(board.getSize());
+      void persist();
+    }
+    markSelectedShapeOption();
     updateCanvasCursorClass();
   });
 
   canvas.addEventListener("pointercancel", () => {
-    board.endStroke();
+    const thicknessChanged = board.endStroke();
+    if (thicknessChanged && settings.applyThicknessToBrush) {
+      updateSizeUi(board.getSize());
+      void persist();
+    }
+    markSelectedShapeOption();
     updateCanvasCursorClass();
   });
 }
@@ -602,13 +863,13 @@ function setupHotkeys() {
       return;
     }
 
-    if (matchesHotkey(e, settings.colorHotkey)) {
+    if (settings.colorHotkeyEnabled && matchesHotkey(e, settings.colorHotkey)) {
       e.preventDefault();
       toggleColorPanel();
       return;
     }
 
-    if (matchesHotkey(e, settings.shapeHotkey)) {
+    if (settings.shapeHotkeyEnabled && matchesHotkey(e, settings.shapeHotkey)) {
       e.preventDefault();
       toggleShapePanel();
       return;
@@ -617,12 +878,25 @@ function setupHotkeys() {
     if (e.key === "Shift") {
       board.setShiftHeld(true);
     }
+
+    if (["Control", "Shift", "Alt", "Meta"].includes(e.key)) {
+      syncSizePreviewVisibility(e);
+    }
   });
 
   window.addEventListener("keyup", (e) => {
     if (e.key === "Shift") {
       board.setShiftHeld(false);
     }
+    if (["Control", "Shift", "Alt", "Meta"].includes(e.key)) {
+      syncSizePreviewVisibility(e);
+    }
+  });
+
+  window.addEventListener("pointermove", (e) => {
+    if (!active) return;
+    positionSizePreview(e.clientX, e.clientY);
+    syncSizePreviewVisibility(e);
   });
 
   window.addEventListener(
@@ -632,6 +906,8 @@ function setupHotkeys() {
         return;
       }
       e.preventDefault();
+      positionSizePreview(e.clientX, e.clientY);
+      showSizePreview();
       const step = settings.sizeScrollSensitivity;
       const delta = e.deltaY < 0 ? step : -step;
       updateSizeUi(board.getSize() + delta);
@@ -648,13 +924,16 @@ async function boot() {
   updateSizeUi(settings.brushSize);
   updateSensitivityUi(settings.sizeScrollSensitivity);
   updateBrushPersistenceUi(settings.brushPersistence);
+  updateHandleOptionsUi();
   hotkeyBtn.textContent = settings.activateHotkey;
   colorHotkeyBtn.textContent = settings.colorHotkey;
   shapeHotkeyBtn.textContent = settings.shapeHotkey;
+  updatePanelHotkeyEnableUi();
   updateSizeScrollHotkeyUi(settings.sizeScrollHotkey);
   markSelectedShapeOption();
   applyToolbarPosition();
   setupToolbarDrag();
+  setupSettingsDrag();
   setupDrawing();
   setupHotkeys();
 
@@ -680,7 +959,7 @@ async function boot() {
   shapeOptions.addEventListener("click", (e) => {
     const btn = (e.target as Element).closest<HTMLElement>(".shape-option");
     if (!btn?.dataset.shape) return;
-    const kind = btn.dataset.shape as ShapeKind;
+    const kind = btn.dataset.shape as Exclude<Tool, "freehand">;
     if (board.getTool() === kind) {
       setShapeTool("freehand");
     } else {
@@ -695,8 +974,16 @@ async function boot() {
     await persist();
   });
 
+  editColorInput.addEventListener("input", () => {
+    updateAddPresetBtn();
+  });
+
   addPresetBtn.addEventListener("click", async () => {
-    await addPresetColor(colorInput.value);
+    await addPresetColor(editColorInput.value);
+  });
+
+  resetPresetsBtn.addEventListener("click", async () => {
+    await resetPresetColors();
   });
 
   settingsBtn.addEventListener("click", () => {
@@ -704,11 +991,22 @@ async function boot() {
     shapePanel.classList.add("hidden");
     settingsPanel.classList.toggle("hidden");
     if (!settingsPanel.classList.contains("hidden")) {
+      setAdvancedSettingsOpen(false);
       updateBrushPersistenceUi(settings.brushPersistence);
-      positionPanel(settingsPanel, settingsBtn);
+      updateHandleOptionsUi();
+      applySettingsPanelPosition(settingsBtn);
     } else {
+      setDefaultColorFlyoutOpen(false);
       stopHotkeyRecording();
     }
+  });
+
+  advancedSettingsToggle.addEventListener("click", () => {
+    setAdvancedSettingsOpen(true);
+  });
+
+  hideAdvancedSettings.addEventListener("click", () => {
+    setAdvancedSettingsOpen(false);
   });
 
   settingsClose.addEventListener("click", () => {
@@ -720,11 +1018,25 @@ async function boot() {
   });
 
   colorHotkeyBtn.addEventListener("click", () => {
+    if (!settings.colorHotkeyEnabled) return;
     startHotkeyRecording("color");
   });
 
   shapeHotkeyBtn.addEventListener("click", () => {
+    if (!settings.shapeHotkeyEnabled) return;
     startHotkeyRecording("shape");
+  });
+
+  colorHotkeyEnabled.addEventListener("change", async () => {
+    settings.colorHotkeyEnabled = colorHotkeyEnabled.checked;
+    updatePanelHotkeyEnableUi();
+    await saveSettings(settings);
+  });
+
+  shapeHotkeyEnabled.addEventListener("change", async () => {
+    settings.shapeHotkeyEnabled = shapeHotkeyEnabled.checked;
+    updatePanelHotkeyEnableUi();
+    await saveSettings(settings);
   });
 
   sizeHotkeyBtn.addEventListener("click", () => {
@@ -751,6 +1063,63 @@ async function boot() {
   brushPersistDefault.addEventListener("change", onBrushPersistenceChange);
   brushPersistRemember.addEventListener("change", onBrushPersistenceChange);
 
+  showLineThicknessHandle.addEventListener("change", async () => {
+    settings.showLineThicknessHandle = showLineThicknessHandle.checked;
+    board.setShowLineThicknessHandle(settings.showLineThicknessHandle);
+    await saveSettings(settings);
+  });
+
+  showLineOpacityHandle.addEventListener("change", async () => {
+    settings.showLineOpacityHandle = showLineOpacityHandle.checked;
+    board.setShowLineOpacityHandle(settings.showLineOpacityHandle);
+    await saveSettings(settings);
+  });
+
+  showShapeThicknessHandle.addEventListener("change", async () => {
+    settings.showShapeThicknessHandle = showShapeThicknessHandle.checked;
+    board.setShowShapeThicknessHandle(settings.showShapeThicknessHandle);
+    await saveSettings(settings);
+  });
+
+  showShapeOpacityHandle.addEventListener("change", async () => {
+    settings.showShapeOpacityHandle = showShapeOpacityHandle.checked;
+    board.setShowShapeOpacityHandle(settings.showShapeOpacityHandle);
+    await saveSettings(settings);
+  });
+
+  applyThicknessToBrush.addEventListener("change", async () => {
+    settings.applyThicknessToBrush = applyThicknessToBrush.checked;
+    board.setApplyThicknessToBrush(settings.applyThicknessToBrush);
+    await saveSettings(settings);
+  });
+
+  returnToFreehandAfterShape.addEventListener("change", async () => {
+    settings.returnToFreehandAfterShape = returnToFreehandAfterShape.checked;
+    board.setReturnToFreehandAfterShape(settings.returnToFreehandAfterShape);
+    await saveSettings(settings);
+  });
+
+  showArrowTipPivot.addEventListener("change", async () => {
+    settings.showArrowTipPivot = showArrowTipPivot.checked;
+    board.setShowArrowTipPivot(settings.showArrowTipPivot);
+    await saveSettings(settings);
+  });
+
+  defaultColorBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    const open = !defaultColorPicker.classList.contains("open");
+    setDefaultColorFlyoutOpen(open);
+  });
+
+  document.addEventListener("pointerdown", (e) => {
+    if (!defaultColorPicker.classList.contains("open")) return;
+    const target = e.target;
+    if (!(target instanceof Node)) return;
+    if (defaultColorPicker.contains(target)) return;
+    if (defaultColorPresets.contains(target)) return;
+    setDefaultColorFlyoutOpen(false);
+  });
+
   defaultSize.addEventListener("input", async () => {
     const size = Math.max(1, Math.min(80, Number(defaultSize.value)));
     settings.brushSize = size;
@@ -762,7 +1131,24 @@ async function boot() {
   window.addEventListener("resize", () => {
     board.resize();
     applyToolbarPosition();
+    if (!settingsPanel.classList.contains("hidden")) {
+      applySettingsPanelPosition(settingsBtn);
+    }
+    if (defaultColorPicker.classList.contains("open")) {
+      positionDefaultColorFlyout();
+    }
   });
+
+  const settingsScroll = settingsPanel.querySelector(".settings-scroll");
+  settingsScroll?.addEventListener(
+    "scroll",
+    () => {
+      if (defaultColorPicker.classList.contains("open")) {
+        positionDefaultColorFlyout();
+      }
+    },
+    { passive: true },
+  );
 
   await listen("drawing-activated", async () => {
     await activate();
@@ -770,6 +1156,7 @@ async function boot() {
 
   await listen("drawing-deactivated", () => {
     active = false;
+    hideSizePreview();
     document.body.classList.remove("active");
     closePanels();
     setShapeTool("freehand");
