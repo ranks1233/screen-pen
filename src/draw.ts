@@ -97,17 +97,16 @@ function chaikinSmooth(points: Point[], iterations = 3): Point[] {
   return pts;
 }
 
-const SMOOTH_STRENGTH = 5;
-
 /**
  * Stroke smoothing: neighbor averaging (linear cost) then Chaikin.
- * Strength is moderate so freehand still feels natural without over-blurring.
+ * `strength` is averaging passes (0 = off).
  */
-export function smoothStroke(points: Point[]): Point[] {
-  if (points.length < 3) return points.slice();
+export function smoothStroke(points: Point[], strength = 5): Point[] {
+  if (points.length < 3 || strength <= 0) return points.slice();
 
+  const passes = Math.max(0, Math.min(10, Math.round(strength)));
   let pts = points.map((p) => ({ ...p }));
-  for (let i = 0; i < SMOOTH_STRENGTH; i++) {
+  for (let i = 0; i < passes; i++) {
     const next: Point[] = [pts[0]];
     for (let j = 1; j < pts.length - 1; j++) {
       next.push({
@@ -918,6 +917,7 @@ export class DrawingBoard {
   private applyThicknessToBrush = true;
   private returnToFreehandAfterShape = true;
   private showArrowTipPivot = true;
+  private smoothStrength = 5;
 
   constructor(canvas: HTMLCanvasElement) {
     const ctx = canvas.getContext("2d");
@@ -949,6 +949,10 @@ export class DrawingBoard {
 
   getTool() {
     return this.tool;
+  }
+
+  setSmoothStrength(strength: number) {
+    this.smoothStrength = Math.max(0, Math.min(10, Math.round(strength)));
   }
 
   setShowLineThicknessHandle(show: boolean) {
@@ -1524,7 +1528,9 @@ export class DrawingBoard {
     } else {
       const raw = this.current.points;
       const smoothed =
-        this.shiftHeld || raw.length < 3 ? raw : smoothStroke(raw);
+        this.shiftHeld || raw.length < 3
+          ? raw
+          : smoothStroke(raw, this.smoothStrength);
 
       this.items.push({
         kind: this.current.kind,

@@ -28,6 +28,8 @@ export type Settings = {
   color: string;
   brushSize: number;
   sizeScrollSensitivity: number;
+  /** Freehand/arrow auto-smooth strength on stroke release (0 = off). */
+  smoothStrength: number;
   brushPersistence: BrushPersistence;
   presetColors: string[];
   showLineThicknessHandle: boolean;
@@ -55,6 +57,7 @@ const DEFAULTS: Settings = {
   color: "#ff2d2d",
   brushSize: 4,
   sizeScrollSensitivity: 4,
+  smoothStrength: 5,
   brushPersistence: "rememberLast",
   presetColors: [...DEFAULT_PRESET_COLORS],
   showLineThicknessHandle: true,
@@ -95,6 +98,17 @@ export async function loadSettings(): Promise<Settings> {
   settings.sizeScrollSensitivity = Math.max(
     1,
     Math.min(10, Math.round(settings.sizeScrollSensitivity || DEFAULTS.sizeScrollSensitivity)),
+  );
+  settings.smoothStrength = Math.max(
+    0,
+    Math.min(
+      10,
+      Math.round(
+        typeof settings.smoothStrength === "number"
+          ? settings.smoothStrength
+          : DEFAULTS.smoothStrength,
+      ),
+    ),
   );
   settings.brushSize = Math.max(
     1,

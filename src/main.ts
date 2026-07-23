@@ -66,6 +66,12 @@ const sizeSensitivity = document.getElementById(
 const sensitivityValue = document.getElementById(
   "sensitivity-value",
 ) as HTMLElement;
+const smoothStrengthInput = document.getElementById(
+  "smooth-strength",
+) as HTMLInputElement;
+const smoothStrengthValue = document.getElementById(
+  "smooth-strength-value",
+) as HTMLElement;
 const sizePreview = document.getElementById("size-preview") as HTMLElement;
 const brushPersistDefault = document.getElementById(
   "brush-persist-default",
@@ -209,6 +215,14 @@ function updateSensitivityUi(value: number) {
   settings.sizeScrollSensitivity = clamped;
   sizeSensitivity.value = String(clamped);
   sensitivityValue.textContent = String(clamped);
+}
+
+function updateSmoothStrengthUi(value: number) {
+  const clamped = Math.max(0, Math.min(10, Math.round(value)));
+  settings.smoothStrength = clamped;
+  smoothStrengthInput.value = String(clamped);
+  smoothStrengthValue.textContent = String(clamped);
+  board.setSmoothStrength(clamped);
 }
 
 function updateBrushDefaultsUi() {
@@ -923,6 +937,7 @@ async function boot() {
   updateColorUi(settings.color);
   updateSizeUi(settings.brushSize);
   updateSensitivityUi(settings.sizeScrollSensitivity);
+  updateSmoothStrengthUi(settings.smoothStrength);
   updateBrushPersistenceUi(settings.brushPersistence);
   updateHandleOptionsUi();
   hotkeyBtn.textContent = settings.activateHotkey;
@@ -1045,6 +1060,11 @@ async function boot() {
 
   sizeSensitivity.addEventListener("input", async () => {
     updateSensitivityUi(Number(sizeSensitivity.value));
+    await persist();
+  });
+
+  smoothStrengthInput.addEventListener("input", async () => {
+    updateSmoothStrengthUi(Number(smoothStrengthInput.value));
     await persist();
   });
 
